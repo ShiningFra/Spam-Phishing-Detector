@@ -1,0 +1,6 @@
+{
+  "model": "Logistic Regression",
+  "test_accuracy": 1.0,
+  "test_f1_macro": 1.0,
+  "test_auc_roc": 1.0
+}
