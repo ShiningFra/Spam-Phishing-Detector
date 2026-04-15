@@ -1,0 +1,21 @@
+{
+  "eval_sample": 60,
+  "pipeline_accuracy": 0.55,
+  "pipeline_f1_macro": 0.4616,
+  "avg_latency_ms": 4612.29,
+  "adversarial_accuracy": 0.4,
+  "threat_distribution": {
+    "none": 47,
+    "low": 0,
+    "medium": 1,
+    "high": 12,
+    "critical": 0
+  },
+  "use_bert": true,
+  "weights": {
+    "rules": 0.2,
+    "headers": 0.25,
+    "ml": 0.35,
+    "bert": 0.2
+  }
+}
