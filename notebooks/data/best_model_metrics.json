@@ -1,6 +1,6 @@
 {
-  "model": "Logistic Regression",
-  "test_accuracy": 1.0,
-  "test_f1_macro": 1.0,
-  "test_auc_roc": 1.0
+  "model": "Random Forest",
+  "test_accuracy": 0.9334731795025472,
+  "test_f1_macro": 0.941465551309146,
+  "test_auc_roc": 0.9966111111349084
 }

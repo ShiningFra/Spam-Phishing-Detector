@@ -8,7 +8,7 @@ services:
       - "8000:8000"
     volumes:
       - ./logs:/app/logs        # Persistance des logs
-      - ./data:/app/data        # Modèles partagés avec l'hôte
+      - ./data:/app/data        # ModÃ¨les partagÃ©s avec l'hÃ´te
     environment:
       - ALERT_EMAIL_FROM=${ALERT_EMAIL_FROM:-detector@enspy.cm}
       - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:-admin@enspy.cm}

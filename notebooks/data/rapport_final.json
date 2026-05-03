@@ -1,69 +1,69 @@
 {
   "projet": "Système Intelligent de Détection de Spam et de Phishing",
   "auteur": "Nghogué Taptué Franck Roddier — 5GI, ENSPY",
-  "date": "2026-04-17",
+  "date": "2026-05-03",
   "version": "1.0.0",
   "resultats": {
     "NB03_LinearSVC": {
-      "model": "Logistic Regression",
-      "test_accuracy": 1.0,
-      "test_f1_macro": 1.0,
-      "test_auc_roc": 1.0
+      "model": "Random Forest",
+      "test_accuracy": 0.9334731795025472,
+      "test_f1_macro": 0.941465551309146,
+      "test_auc_roc": 0.9966111111349084
     },
     "NB04_DistilBERT": {
       "model": "DistilBERT (distilbert-base-uncased)",
-      "test_accuracy": 0.6667,
-      "test_f1_macro": 0.5556,
-      "test_auc_roc": 0.9444,
-      "best_epoch": 2,
-      "best_val_f1": 0.8857,
+      "test_accuracy": 0.9931,
+      "test_f1_macro": 0.9919,
+      "test_auc_roc": 0.9995,
+      "best_epoch": 4,
+      "best_val_f1": 0.9927,
       "n_epochs_run": 4,
-      "model_dir": "data\\distilbert_model",
+      "model_dir": "data/distilbert_model",
       "history": {
         "train_loss": [
-          1.080402433872223,
-          0.9939156472682953,
-          0.9366366962591807,
-          0.8981583813826243
+          0.25903751113362616,
+          0.049550838312920606,
+          0.01774186944639278,
+          0.005790199417599623
         ],
         "train_acc": [
-          0.40476190476190477,
-          0.6428571428571429,
-          0.7857142857142857,
-          0.7619047619047619
+          0.9034163883894168,
+          0.990174672489083,
+          0.9964680195222194,
+          0.9989082969432315
         ],
         "val_loss": [
-          1.0272153615951538,
-          0.9678708910942078,
-          0.920018345117569,
-          0.9002987146377563
+          0.07400036099117303,
+          0.02918400114450078,
+          0.030184628536830585,
+          0.03353870852406022
         ],
         "val_acc": [
-          0.7777777777777778,
-          0.8888888888888888,
-          0.7777777777777778,
-          0.7777777777777778
+          0.9817201078813306,
+          0.9901108780341624,
+          0.9922085705723704,
+          0.9925082409349716
         ],
         "val_f1": [
-          0.7380952380952381,
-          0.8857142857142857,
-          0.75,
-          0.75
+          0.9770214755726827,
+          0.9889588080913748,
+          0.9924967263193669,
+          0.9927407516479643
         ]
       }
     },
     "NB05_PipelineHybride": {
-      "eval_sample": 60,
-      "pipeline_accuracy": 0.55,
-      "pipeline_f1_macro": 0.4616,
-      "avg_latency_ms": 4612.29,
-      "adversarial_accuracy": 0.4,
+      "eval_sample": 300,
+      "pipeline_accuracy": 0.92,
+      "pipeline_f1_macro": 0.9188,
+      "avg_latency_ms": 1216.28,
+      "adversarial_accuracy": 0.2,
       "threat_distribution": {
-        "none": 47,
+        "none": 204,
         "low": 0,
-        "medium": 1,
-        "high": 12,
-        "critical": 0
+        "medium": 30,
+        "high": 64,
+        "critical": 2
       },
       "use_bert": true,
       "weights": {
@@ -77,28 +77,28 @@
   "synthese": [
     {
       "Approche": "NB 03 — LinearSVC (best ML)",
-      "F1-Macro": 1.0,
-      "Accuracy": 1.0,
-      "AUC-ROC": 1.0,
+      "F1-Macro": 0.941465551309146,
+      "Accuracy": 0.9334731795025472,
+      "AUC-ROC": 0.9966111111349084,
       "Latence (ms)": 0.05,
       "GPU": "Non",
       "Contexte": "Non"
     },
     {
       "Approche": "NB 04 — DistilBERT",
-      "F1-Macro": 0.5556,
-      "Accuracy": 0.6667,
-      "AUC-ROC": 0.9444,
+      "F1-Macro": 0.9919,
+      "Accuracy": 0.9931,
+      "AUC-ROC": 0.9995,
       "Latence (ms)": 18.0,
       "GPU": "Recommandé",
       "Contexte": "Oui"
     },
     {
       "Approche": "NB 05 — Pipeline hybride",
-      "F1-Macro": 0.4616,
-      "Accuracy": 0.55,
+      "F1-Macro": 0.9188,
+      "Accuracy": 0.92,
       "AUC-ROC": 0.97,
-      "Latence (ms)": 4612.29,
+      "Latence (ms)": 1216.28,
       "GPU": "Optionnel",
       "Contexte": "Partiel (BERT optionnel)"
     }

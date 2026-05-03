@@ -1,19 +1,19 @@
-# Système Intelligent de Détection de Spam et de Phishing
+# SystÃ¨me Intelligent de DÃ©tection de Spam et de Phishing
 
-**Auteur :** Nghogué Taptué Franck Roddier — 5GI, ENSPY  
-**Version :** 1.0.0  
+**Auteur :** NghoguÃ© TaptuÃ© Franck Roddier â€” 5GI, ENSPY
+**Version :** 1.0.0
 
 ## Description
 
-Pipeline hybride de détection de spam et de phishing combinant :
-- Règles heuristiques (URLs, patterns, obfuscation)
+Pipeline hybride de dÃ©tection de spam et de phishing combinant :
+- RÃ¨gles heuristiques (URLs, patterns, obfuscation)
 - Analyse des headers email (SPF/DKIM/DMARC)
-- Modèle ML classique (LinearSVC + TF-IDF)
-- DistilBERT fine-tuné (analyse sémantique contextuelle)
+- ModÃ¨le ML classique (LinearSVC + TF-IDF)
+- DistilBERT fine-tunÃ© (analyse sÃ©mantique contextuelle)
 
-## Démarrage rapide
+## DÃ©marrage rapide
 
-### Avec Docker (recommandé)
+### Avec Docker (recommandÃ©)
 ```bash
 # Build et lancement
 docker-compose up --build
@@ -32,15 +32,15 @@ uvicorn api.main:app --reload --port 8000
 
 ## Endpoints
 
-| Méthode | Endpoint   | Description |
+| MÃ©thode | Endpoint   | Description |
 |---------|------------|-------------|
-| GET     | /health    | État du service + modèles chargés |
+| GET     | /health    | Ã‰tat du service + modÃ¨les chargÃ©s |
 | POST    | /analyze   | Analyse un email |
 | POST    | /batch     | Analyse un lot d'emails (max 100) |
-| GET     | /stats     | Statistiques de détection |
+| GET     | /stats     | Statistiques de dÃ©tection |
 | GET     | /docs      | Documentation interactive (Swagger) |
 
-## Exemple de réponse
+## Exemple de rÃ©ponse
 
 ```json
 {
@@ -55,7 +55,7 @@ uvicorn api.main:app --reload --port 8000
 }
 ```
 
-## Configuration des alertes (§6.4)
+## Configuration des alertes (Â§6.4)
 
 Configurer via variables d'environnement dans `.env` :
 ```

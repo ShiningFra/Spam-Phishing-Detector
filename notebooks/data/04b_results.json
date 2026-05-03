@@ -1,0 +1,177 @@
+{
+  "model": "distilbert-base-multilingual-cased",
+  "languages_trained": 20,
+  "fast_mode": true,
+  "total_emails": 23446,
+  "best_epoch": 4,
+  "best_val_f1": 0.9851,
+  "test_f1_macro": 0.9867,
+  "test_accuracy": 0.9864,
+  "phishing_detection_multilang": 1.0,
+  "by_language": {
+    "Anglais": {
+      "f1": 0.9852,
+      "acc": 0.9856,
+      "n": 3323,
+      "group": "Germanic"
+    },
+    "Russe": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 10,
+      "group": "Slavic"
+    },
+    "Arabe": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 9,
+      "group": "MENA"
+    },
+    "Suédois": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 11,
+      "group": "Germanic"
+    },
+    "Hindi": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 10,
+      "group": "South Asian"
+    },
+    "Chinois": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 17,
+      "group": "East Asian"
+    },
+    "Italien": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 10,
+      "group": "Roman"
+    },
+    "Thaï": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 8,
+      "group": "SEA"
+    },
+    "Coréen": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 8,
+      "group": "East Asian"
+    },
+    "Néerlandais": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 7,
+      "group": "Germanic"
+    },
+    "Turc": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 13,
+      "group": "Turkic"
+    },
+    "Espagnol": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 8,
+      "group": "Roman"
+    },
+    "Japonais": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 14,
+      "group": "East Asian"
+    },
+    "Allemand": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 7,
+      "group": "Germanic"
+    },
+    "Indonésien": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 9,
+      "group": "SEA"
+    },
+    "Français": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 9,
+      "group": "Roman"
+    },
+    "Polonais": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 11,
+      "group": "Slavic"
+    },
+    "Portugais": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 6,
+      "group": "Roman"
+    },
+    "Persan": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 17,
+      "group": "MENA"
+    },
+    "Malais": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 5,
+      "group": "SEA"
+    },
+    "Vietnamien": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 5,
+      "group": "SEA"
+    }
+  },
+  "history": {
+    "train_loss": [
+      0.2885,
+      0.0472,
+      0.0223,
+      0.0066
+    ],
+    "train_acc": [
+      0.874,
+      0.9884,
+      0.9953,
+      0.9985
+    ],
+    "train_f1": [
+      0.8301,
+      0.9883,
+      0.9938,
+      0.9978
+    ],
+    "val_loss": [
+      0.0786,
+      0.0699,
+      0.0706,
+      0.0767
+    ],
+    "val_acc": [
+      0.9773,
+      0.9833,
+      0.9839,
+      0.9856
+    ],
+    "val_f1": [
+      0.9737,
+      0.9822,
+      0.9843,
+      0.9851
+    ]
+  }
+}

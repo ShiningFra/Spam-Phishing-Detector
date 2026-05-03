@@ -1,34 +1,34 @@
 FROM python:3.11-slim
 
-# Métadonnées
-LABEL maintainer="Nghogué Taptué Franck Roddier <enspy5gi>"
-LABEL description="Système de détection spam et phishing — ENSPY 5GI"
+# MÃ©tadonnÃ©es
+LABEL maintainer="NghoguÃ© TaptuÃ© Franck Roddier <enspy5gi>"
+LABEL description="SystÃ¨me de dÃ©tection spam et phishing â€” ENSPY 5GI"
 
 WORKDIR /app
 
-# Dépendances système
+# DÃ©pendances systÃ¨me
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ && \
     rm -rf /var/lib/apt/lists/*
 
-# Dépendances Python
+# DÃ©pendances Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Téléchargement des ressources NLTK
+# TÃ©lÃ©chargement des ressources NLTK
 RUN python -c "import nltk; nltk.download('stopwords'); nltk.download('wordnet'); nltk.download('punkt')"
 
 # Code source
 COPY api/ ./api/
 COPY data/ ./data/
 
-# Création du dossier logs
+# CrÃ©ation du dossier logs
 RUN mkdir -p /app/logs
 
-# Port exposé
+# Port exposÃ©
 EXPOSE 8000
 
-# Variables d'environnement par défaut
+# Variables d'environnement par dÃ©faut
 ENV ALERT_MIN_LEVEL=high
 ENV PYTHONPATH=/app
 
@@ -36,5 +36,5 @@ ENV PYTHONPATH=/app
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Démarrage
+# DÃ©marrage
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
