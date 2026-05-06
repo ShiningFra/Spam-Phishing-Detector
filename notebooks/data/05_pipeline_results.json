@@ -1,15 +1,15 @@
 {
   "eval_sample": 300,
-  "pipeline_accuracy": 0.92,
-  "pipeline_f1_macro": 0.9188,
-  "avg_latency_ms": 1216.28,
-  "adversarial_accuracy": 0.2,
+  "pipeline_accuracy": 0.9967,
+  "pipeline_f1_macro": 0.9929,
+  "avg_latency_ms": 83.9,
+  "adversarial_accuracy": 0.4,
   "threat_distribution": {
-    "none": 204,
+    "none": 272,
     "low": 0,
-    "medium": 30,
-    "high": 64,
-    "critical": 2
+    "medium": 3,
+    "high": 22,
+    "critical": 3
   },
   "use_bert": true,
   "weights": {

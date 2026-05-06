@@ -2,176 +2,176 @@
   "model": "distilbert-base-multilingual-cased",
   "languages_trained": 20,
   "fast_mode": true,
-  "total_emails": 23446,
+  "total_emails": 181604,
   "best_epoch": 4,
-  "best_val_f1": 0.9851,
-  "test_f1_macro": 0.9867,
-  "test_accuracy": 0.9864,
+  "best_val_f1": 0.9799,
+  "test_f1_macro": 0.9853,
+  "test_accuracy": 0.9977,
   "phishing_detection_multilang": 1.0,
   "by_language": {
     "Anglais": {
-      "f1": 0.9852,
-      "acc": 0.9856,
-      "n": 3323,
+      "f1": 0.9837,
+      "acc": 0.9977,
+      "n": 27057,
       "group": "Germanic"
-    },
-    "Russe": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 10,
-      "group": "Slavic"
     },
     "Arabe": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 9,
+      "n": 11,
       "group": "MENA"
     },
-    "Suédois": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 11,
-      "group": "Germanic"
-    },
-    "Hindi": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 10,
-      "group": "South Asian"
-    },
-    "Chinois": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 17,
-      "group": "East Asian"
-    },
-    "Italien": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 10,
-      "group": "Roman"
-    },
     "Thaï": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 8,
+      "f1": 0.8222,
+      "acc": 0.9167,
+      "n": 12,
       "group": "SEA"
-    },
-    "Coréen": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 8,
-      "group": "East Asian"
     },
     "Néerlandais": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 7,
+      "n": 6,
       "group": "Germanic"
     },
-    "Turc": {
+    "Malais": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 13,
-      "group": "Turkic"
+      "n": 8,
+      "group": "SEA"
     },
     "Espagnol": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 8,
+      "n": 9,
       "group": "Roman"
+    },
+    "Coréen": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 9,
+      "group": "East Asian"
     },
     "Japonais": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 14,
+      "n": 12,
       "group": "East Asian"
     },
-    "Allemand": {
+    "Persan": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 8,
+      "group": "MENA"
+    },
+    "Italien": {
       "f1": 1.0,
       "acc": 1.0,
       "n": 7,
-      "group": "Germanic"
-    },
-    "Indonésien": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 9,
-      "group": "SEA"
-    },
-    "Français": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 9,
       "group": "Roman"
     },
     "Polonais": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 11,
+      "n": 9,
       "group": "Slavic"
     },
-    "Portugais": {
+    "Turc": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 6,
+      "n": 12,
+      "group": "Turkic"
+    },
+    "Français": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 7,
       "group": "Roman"
     },
-    "Persan": {
+    "Indonésien": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 17,
-      "group": "MENA"
-    },
-    "Malais": {
-      "f1": 1.0,
-      "acc": 1.0,
-      "n": 5,
+      "n": 12,
       "group": "SEA"
+    },
+    "Chinois": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 10,
+      "group": "East Asian"
+    },
+    "Hindi": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 7,
+      "group": "South Asian"
     },
     "Vietnamien": {
       "f1": 1.0,
       "acc": 1.0,
-      "n": 5,
+      "n": 9,
       "group": "SEA"
+    },
+    "Russe": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 8,
+      "group": "Slavic"
+    },
+    "Allemand": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 8,
+      "group": "Germanic"
+    },
+    "Suédois": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 9,
+      "group": "Germanic"
+    },
+    "Portugais": {
+      "f1": 1.0,
+      "acc": 1.0,
+      "n": 11,
+      "group": "Roman"
     }
   },
   "history": {
     "train_loss": [
-      0.2885,
-      0.0472,
-      0.0223,
-      0.0066
+      0.1843,
+      0.0593,
+      0.0341,
+      0.0181
     ],
     "train_acc": [
-      0.874,
-      0.9884,
-      0.9953,
-      0.9985
+      0.9698,
+      0.9963,
+      0.9982,
+      0.9991
     ],
     "train_f1": [
-      0.8301,
-      0.9883,
-      0.9938,
-      0.9978
+      0.8005,
+      0.9674,
+      0.981,
+      0.9889
     ],
     "val_loss": [
-      0.0786,
-      0.0699,
-      0.0706,
-      0.0767
+      0.0898,
+      0.137,
+      0.0528,
+      0.0808
     ],
     "val_acc": [
-      0.9773,
-      0.9833,
-      0.9839,
-      0.9856
+      0.992,
+      0.9966,
+      0.9968,
+      0.9972
     ],
     "val_f1": [
-      0.9737,
-      0.9822,
-      0.9843,
-      0.9851
+      0.9327,
+      0.9731,
+      0.9789,
+      0.9799
     ]
   }
 }

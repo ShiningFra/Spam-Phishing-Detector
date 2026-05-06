@@ -1,6 +1,6 @@
 {
   "model": "Random Forest",
-  "test_accuracy": 0.9334731795025472,
-  "test_f1_macro": 0.941465551309146,
-  "test_auc_roc": 0.9966111111349084
+  "test_accuracy": 0.9036251431950039,
+  "test_f1_macro": 0.7356846901282693,
+  "test_auc_roc": 0.9986705848164847
 }
