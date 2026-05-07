@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "ShieldMail v2 — AI + IP Reputation",
+  "version": "2.0.0",
+  "description": "Detection spam/phishing : pipeline IA local + AbuseIPDB + VirusTotal.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://outlook.live.com/*",
+    "https://outlook.office.com/*",
+    "http://localhost:8000/*",
+    "https://api.abuseipdb.com/*",
+    "https://www.virustotal.com/*"
+  ],
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": { "default_popup": "popup.html", "default_title": "ShieldMail v2" },
+  "background": { "service_worker": "background/sw.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*", "https://outlook.live.com/*", "https://outlook.office.com/*"],
+      "js": ["content/inject.js"],
+      "css": ["content/shield.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    { "resources": ["icons/*", "content/shield.css"], "matches": ["https://mail.google.com/*", "https://outlook.live.com/*", "https://outlook.office.com/*"] }
+  ]
+}

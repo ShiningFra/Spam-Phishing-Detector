@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<title>ShieldMail v2</title>
+<style>
+:root{--bg:#070B11;--bg2:#0D1520;--bg3:#111D2E;--b:#1E3048;
+  --teal:#00D4B4;--ham:#00D4B4;--spam:#FF5B3A;--phish:#F5A623;
+  --w:#F0F4F8;--g:#5C7A96;--gl:#8AAFC8;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{width:340px;background:var(--bg);color:var(--w);font-family:'DM Sans',-apple-system,sans-serif;font-size:13px;}
+.hdr{background:var(--bg2);border-bottom:1px solid var(--b);padding:12px 16px;
+  display:flex;align-items:center;gap:8px;}
+.dot{width:7px;height:7px;background:var(--teal);border-radius:50%;
+  box-shadow:0 0 8px var(--teal);animation:p 2s infinite;}
+.logo{font-weight:800;font-size:15px;flex:1;}
+.ver{font-family:monospace;font-size:10px;color:var(--g);}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* API status */
+.api-bar{padding:8px 16px;border-bottom:1px solid var(--b);background:var(--bg3);
+  display:flex;align-items:center;gap:8px;}
+.sdot{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:background .3s;}
+.sdot.on{background:var(--teal);box-shadow:0 0 6px var(--teal);}
+.sdot.off{background:var(--spam);}
+.sdot.chk{background:var(--phish);animation:p .8s infinite;}
+.stxt{font-family:monospace;font-size:10px;color:var(--gl);flex:1;}
+.btn-sm{font-family:monospace;font-size:9px;padding:3px 8px;background:transparent;
+  border:1px solid var(--b);border-radius:3px;color:var(--teal);cursor:pointer;}
+.btn-sm:hover{background:rgba(0,212,180,.1);}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--b);border-bottom:1px solid var(--b);}
+.sc{background:var(--bg2);padding:12px 8px;text-align:center;}
+.sn{font-size:20px;font-weight:800;display:block;line-height:1;margin-bottom:3px;}
+.sn.ham{color:var(--ham);}.sn.spam{color:var(--spam);}.sn.phish{color:var(--phish);}
+.sl{font-family:monospace;font-size:9px;color:var(--g);text-transform:uppercase;letter-spacing:.08em;}
+
+/* Settings */
+.sec{padding:12px 16px;border-bottom:1px solid var(--b);}
+.sec-t{font-family:monospace;font-size:9px;color:var(--g);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px;}
+.row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.row:last-child{margin-bottom:0;}
+.lbl{font-size:12px;color:var(--gl);}
+.lbl small{display:block;font-size:10px;color:var(--g);margin-top:1px;}
+/* Toggle */
+.tgl{position:relative;width:34px;height:18px;flex-shrink:0;}
+.tgl input{opacity:0;width:0;height:0;}
+.sldr{position:absolute;inset:0;background:var(--b);border-radius:9px;cursor:pointer;transition:background .2s;}
+.sldr::before{content:'';position:absolute;width:12px;height:12px;border-radius:50%;
+  background:var(--g);top:3px;left:3px;transition:all .2s;}
+.tgl input:checked+.sldr{background:rgba(0,212,180,.2);}
+.tgl input:checked+.sldr::before{background:var(--teal);transform:translateX(16px);box-shadow:0 0 6px var(--teal);}
+/* Input */
+.inp{flex:1;background:var(--bg);border:1px solid var(--b);border-radius:4px;
+  color:var(--gl);font-family:monospace;font-size:10px;padding:5px 8px;outline:none;}
+.inp:focus{border-color:var(--teal);}
+
+/* Recents */
+.rcnt{padding:8px 16px 4px;}
+.ri{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(30,48,72,.4);}
+.ri:last-child{border:none;}
+.bx{font-family:monospace;font-size:9px;padding:2px 5px;border-radius:3px;text-transform:uppercase;flex-shrink:0;}
+.bx.ham{background:rgba(0,212,180,.15);color:var(--ham);}
+.bx.spam{background:rgba(255,91,58,.15);color:var(--spam);}
+.bx.phishing{background:rgba(245,166,35,.15);color:var(--phish);}
+.rt{flex:1;font-size:11px;color:var(--gl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rc{font-family:monospace;font-size:10px;color:var(--g);flex-shrink:0;}
+.ri-meta{font-family:monospace;font-size:9px;color:var(--g);white-space:nowrap;}
+.empty{padding:16px;text-align:center;color:var(--g);font-size:11px;line-height:1.6;}
+
+/* Footer */
+.ftr{padding:8px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--b);}
+.fl{font-family:monospace;font-size:9px;color:var(--teal);text-decoration:none;}
+.fc{font-size:9px;color:var(--g);}
+
+/* IP threat badge */
+.ip-ok   {color:var(--ham);}
+.ip-warn {color:var(--phish);}
+.ip-bad  {color:var(--spam);}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="dot"></div>
+  <div class="logo">ShieldMail</div>
+  <div class="ver">v2.0 · AI + IP · ENSPY 5GI</div>
+</div>
+
+<div class="api-bar">
+  <div class="sdot chk" id="sd"></div>
+  <div class="stxt" id="st">Vérification...</div>
+  <button class="btn-sm" onclick="checkApi()">Tester</button>
+</div>
+
+<div class="stats">
+  <div class="sc"><span class="sn ham"  id="sham">0</span><span class="sl">Ham</span></div>
+  <div class="sc"><span class="sn spam" id="sspam">0</span><span class="sl">Spam</span></div>
+  <div class="sc"><span class="sn phish" id="sphish">0</span><span class="sl">Phishing</span></div>
+</div>
+
+<div class="sec">
+  <div class="sec-t">// Paramètres</div>
+  <div class="row">
+    <div class="lbl">Analyse auto<small>Dès l'ouverture d'un email</small></div>
+    <label class="tgl"><input type="checkbox" id="autoAnalyze" checked/><span class="sldr"></span></label>
+  </div>
+  <div class="row">
+    <div class="lbl">Badges liste<small>Afficher les badges</small></div>
+    <label class="tgl"><input type="checkbox" id="showBadges" checked/><span class="sldr"></span></label>
+  </div>
+  <div class="row">
+    <div class="lbl">Alertes critiques<small>Bannière rouge menace haute</small></div>
+    <label class="tgl"><input type="checkbox" id="showAlert" checked/><span class="sldr"></span></label>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-t">// Clés API</div>
+  <div class="row"><div class="lbl">API locale</div></div>
+  <div class="row"><input class="inp" id="apiUrl" placeholder="http://localhost:8000"/></div>
+  <div class="row" style="margin-top:8px"><div class="lbl">AbuseIPDB Key</div></div>
+  <div class="row"><input class="inp" id="abuseipdbKey" type="password" placeholder="Votre clé AbuseIPDB"/></div>
+  <div class="row" style="margin-top:8px"><div class="lbl">VirusTotal Key</div></div>
+  <div class="row"><input class="inp" id="virustotalKey" type="password" placeholder="Votre clé VirusTotal"/></div>
+  <div class="row" style="margin-top:10px">
+    <button class="btn-sm" onclick="saveAll()" style="width:100%;text-align:center">Sauvegarder</button>
+  </div>
+</div>
+
+<div class="sec-t" style="padding:10px 16px 0">// Analyses récentes</div>
+<div class="rcnt" id="rcnt"><div class="empty">Ouvrez un email dans Gmail ou Outlook<br>pour démarrer l'analyse.</div></div>
+
+<div class="ftr">
+  <a class="fl" href="http://localhost:8000/docs" target="_blank">API DOCS →</a>
+  <span class="fc">Nghogué T. F. Roddier</span>
+</div>
+
+<script>
+// Chargement initial
+chrome.storage.local.get(
+  ['apiUrl','abuseipdbKey','virustotalKey','autoAnalyze','showBadges','showAlert','stats','recents'],
+  d => {
+    if(d.apiUrl)         document.getElementById('apiUrl').value         = d.apiUrl;
+    if(d.abuseipdbKey)   document.getElementById('abuseipdbKey').value   = d.abuseipdbKey;
+    if(d.virustotalKey)  document.getElementById('virustotalKey').value  = d.virustotalKey;
+    if(d.autoAnalyze  !== undefined) document.getElementById('autoAnalyze').checked = d.autoAnalyze;
+    if(d.showBadges   !== undefined) document.getElementById('showBadges').checked  = d.showBadges;
+    if(d.showAlert    !== undefined) document.getElementById('showAlert').checked   = d.showAlert;
+    const s = d.stats || {ham:0,spam:0,phishing:0};
+    document.getElementById('sham').textContent   = s.ham;
+    document.getElementById('sspam').textContent  = s.spam;
+    document.getElementById('sphish').textContent = s.phishing;
+    renderRecents(d.recents || []);
+    checkApi();
+  }
+);
+
+// Toggles
+['autoAnalyze','showBadges','showAlert'].forEach(id => {
+  document.getElementById(id).addEventListener('change', e => {
+    chrome.storage.local.set({[id]: e.target.checked});
+    chrome.tabs.query({active:true,currentWindow:true}, tabs => {
+      if(tabs[0]) chrome.tabs.sendMessage(tabs[0].id, {type:'SETTINGS_CHANGED', settings:{[id]:e.target.checked}}).catch(()=>{});
+    });
+  });
+});
+
+// Sauvegarde clés
+function saveAll() {
+  const data = {
+    apiUrl:        document.getElementById('apiUrl').value.trim().replace(/\/$/,''),
+    abuseipdbKey:  document.getElementById('abuseipdbKey').value.trim(),
+    virustotalKey: document.getElementById('virustotalKey').value.trim(),
+  };
+  chrome.storage.local.set(data, () => { checkApi(); });
+}
+
+// Test API
+async function checkApi() {
+  const dot = document.getElementById('sd');
+  const txt = document.getElementById('st');
+  const url = document.getElementById('apiUrl').value.trim().replace(/\/$/,'');
+  dot.className='sdot chk'; txt.textContent='Vérification...';
+  try {
+    const r = await fetch(`${url}/health`, {signal:AbortSignal.timeout(3000)});
+    if(r.ok){ dot.className='sdot on'; txt.textContent='API connectée'; }
+    else throw new Error();
+  } catch {
+    dot.className='sdot off'; txt.textContent='API hors ligne';
+  }
+}
+
+// Recents
+function renderRecents(recents) {
+  const c = document.getElementById('rcnt');
+  if(!recents || recents.length===0){
+    c.innerHTML='<div class="empty">Ouvrez un email dans Gmail ou Outlook<br>pour démarrer l\'analyse.</div>';
+    return;
+  }
+  c.innerHTML = recents.slice(0,6).map(r => {
+    let meta = '';
+    if(r.ip_score != null) {
+      const cls = r.ip_score>=75?'ip-bad':r.ip_score>=15?'ip-warn':'ip-ok';
+      meta += `<span class="ri-meta ${cls}"> · IP:${r.ip_score}%</span>`;
+    }
+    if(r.vt_hits != null && r.vt_hits > 0) {
+      meta += `<span class="ri-meta ip-bad"> · VT:${r.vt_hits}</span>`;
+    }
+    return `<div class="ri">
+      <span class="bx ${r.cls}">${r.cls}</span>
+      <span class="rt">${esc(r.preview)}</span>
+      <span class="rc">${r.conf}%</span>${meta}
+    </div>`;
+  }).join('');
+}
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+chrome.runtime.onMessage.addListener(msg => {
+  if(msg.type==='ANALYSIS_DONE'){
+    chrome.storage.local.get(['stats','recents'], d => {
+      const s=d.stats||{ham:0,spam:0,phishing:0};
+      document.getElementById('sham').textContent   = s.ham;
+      document.getElementById('sspam').textContent  = s.spam;
+      document.getElementById('sphish').textContent = s.phishing;
+      renderRecents(d.recents||[]);
+    });
+  }
+});
+</script>
+</body>
+</html>
