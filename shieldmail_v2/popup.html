@@ -125,7 +125,7 @@ body{width:340px;background:var(--bg);color:var(--w);font-family:'DM Sans',-appl
   <div class="row" style="margin-top:8px"><div class="lbl">VirusTotal Key</div></div>
   <div class="row"><input class="inp" id="virustotalKey" type="password" placeholder="Votre clé VirusTotal"/></div>
   <div class="row" style="margin-top:10px">
-    <button class="btn-sm" onclick="saveAll()" style="width:100%;text-align:center">Sauvegarder</button>
+    <button class="btn-sm" id="save-btn" onclick="saveAll()" style="width:100%;text-align:center">Sauvegarder</button>
   </div>
 </div>
 
@@ -169,12 +169,35 @@ chrome.storage.local.get(
 
 // Sauvegarde clés
 function saveAll() {
+  const btn = document.getElementById('save-btn');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '...';
+
   const data = {
-    apiUrl:        document.getElementById('apiUrl').value.trim().replace(/\/$/,''),
+    apiUrl:        document.getElementById('apiUrl').value.trim().replace(/\/$/,'') || 'http://localhost:8000',
     abuseipdbKey:  document.getElementById('abuseipdbKey').value.trim(),
     virustotalKey: document.getElementById('virustotalKey').value.trim(),
   };
-  chrome.storage.local.set(data, () => { checkApi(); });
+
+  chrome.storage.local.set(data, () => {
+    btn.textContent = '✓ Sauvegarde';
+    btn.style.color = '#00D4B4';
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.style.color = '';
+      btn.disabled = false;
+    }, 2000);
+    // Notifier les content scripts
+    chrome.tabs.query({active:true, currentWindow:true}, tabs => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          type: 'SETTINGS_CHANGED', settings: data
+        }).catch(() => {});
+      }
+    });
+    checkApi();
+  });
 }
 
 // Test API

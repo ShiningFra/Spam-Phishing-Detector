@@ -159,3 +159,9 @@ async def root():
         "docs":     "/docs",
         "health":   "/health",
     }
+
+@app.post("/feedback", tags=["Apprentissage"])
+async def feedback(data: dict):
+    """Reçoit les corrections de l'extension pour post-entraînement."""
+    detection_logger.log_detection({**data, "type": "correction"})
+    return {"status": "ok"}
