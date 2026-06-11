@@ -27,7 +27,7 @@ from datetime import datetime
 
 logger = logging.getLogger("spam_detector_v2")
 
-DATA_DIR       = Path(__file__).resolve().parent.parent / "data"  # notebooks/data/
+DATA_DIR       = Path(__file__).parent.parent / "data"
 CORRECTOR_PATH = DATA_DIR / "incremental_corrector.pkl"
 WHITELIST_PATH = DATA_DIR / "whitelist_domains.txt"
 STATS_PATH     = DATA_DIR / "pipeline_stats.json"

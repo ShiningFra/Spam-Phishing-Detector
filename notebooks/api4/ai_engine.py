@@ -35,7 +35,7 @@ from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger("ai_engine")
 
-BASE_DIR       = Path(__file__).resolve().parent.parent  # notebooks/ (pas api/)
+BASE_DIR       = Path(__file__).parent
 DATA_DIR       = BASE_DIR / "data"
 LOGS_DIR       = BASE_DIR / "logs"
 FEEDBACK_FILE  = LOGS_DIR / "feedback_verified.jsonl"

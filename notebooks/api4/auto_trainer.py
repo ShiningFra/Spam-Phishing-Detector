@@ -26,7 +26,7 @@ from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger("auto_trainer")
 
-BASE_DIR      = Path(__file__).resolve().parent.parent  # notebooks/ (pas api/)
+BASE_DIR      = Path(__file__).parent
 LOGS_DIR      = BASE_DIR / "logs"
 DATA_DIR      = BASE_DIR / "data"
 FEEDBACK_FILE = LOGS_DIR / "feedback_verified.jsonl"

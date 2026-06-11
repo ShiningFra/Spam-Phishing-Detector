@@ -32,23 +32,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("api_v2")
 
-# ── Résolution des chemins ───────────────────────────────────────
-# uvicorn est lancé depuis api/ → __file__ = main_v2.py (relatif)
-# .resolve() garantit le chemin absolu quel que soit le cwd
-_API_DIR  = Path(__file__).resolve().parent          # .../notebooks/api/
-_ROOT_DIR = _API_DIR.parent                          # .../notebooks/
-
+_ROOT_DIR    = Path(__file__).parent.parent
 _DETECT_FILE = LOGS_DIR / "detections.jsonl"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── Script incrémental (dans notebooks/, pas dans api/) ──────────
+# ── Script incrémental — pointe maintenant vers la v2 ────────────
 _INCREMENTAL_SCRIPT = _ROOT_DIR / "incremental_layer_v2.py"
 if not _INCREMENTAL_SCRIPT.exists():
+    # Fallback si l'ancien nom est utilisé
     _INCREMENTAL_SCRIPT = _ROOT_DIR / "incremental_layer.py"
-
-logger.info(f"API dir  : {_API_DIR}")
-logger.info(f"Root dir : {_ROOT_DIR}")
-logger.info(f"Script   : {_INCREMENTAL_SCRIPT} (existe={_INCREMENTAL_SCRIPT.exists()})")
 
 
 # ═══════════════════════════════════════════════════════════════
