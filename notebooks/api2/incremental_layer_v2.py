@@ -1,0 +1,473 @@
+# -*- coding: utf-8 -*-
+"""
+incremental_layer_v2.py
+=======================
+Mise à jour incrémentale améliorée du correcteur SGD.
+
+Améliorations vs v1 :
+  - Features enrichies : proba RF (3) + TF-IDF top-500 + 20 features structurelles = 523 dims
+  - Spam oversampling  : les corrections spam sont sur-représentées (x3) pour
+                         compenser le biais RF contre la classe spam
+  - Évaluation par classe : F1 par classe affiché + alerte si spam recall < 0.50
+  - Historique des updates : sauvegardé dans data/update_history.json
+  - Support auto-labels : les pseudo-labels du AutoLabeler sont intégrés
+
+Usage :
+  python incremental_layer_v2.py --show
+  python incremental_layer_v2.py --force
+  python incremental_layer_v2.py --reset
+  python incremental_layer_v2.py --eval      Évaluation du correcteur actuel
+"""
+
+import argparse
+import json
+import logging
+import warnings
+import shutil
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+
+warnings.filterwarnings("ignore", category=UserWarning)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+logger = logging.getLogger("incremental_v2")
+
+BASE_DIR      = Path(__file__).parent
+DATA_DIR      = BASE_DIR / "data"
+LOGS_DIR      = BASE_DIR / "logs"
+FEEDBACK_FILE = LOGS_DIR / "feedback_verified.jsonl"
+CORRECTOR_PKL = DATA_DIR / "incremental_corrector.pkl"
+BACKUP_DIR    = DATA_DIR / "backups"
+HISTORY_FILE  = DATA_DIR / "update_history.json"
+
+for d in [LOGS_DIR, BACKUP_DIR]:
+    d.mkdir(exist_ok=True)
+
+CLASS_NAMES = ["ham", "phishing", "spam"]
+LABEL2ID    = {c: i for i, c in enumerate(CLASS_NAMES)}
+MIN_CORRECTIONS = 5   # Abaissé vs v1 (10) pour réagir plus vite au spam
+
+
+# ══════════════════════════════════════════════════════════════════
+# CHARGEMENT MODÈLES DE BASE (immuables)
+# ══════════════════════════════════════════════════════════════════
+
+def load_base_models():
+    import joblib
+    logger.info("Chargement modèles de base (sans modification)...")
+    rf    = joblib.load(DATA_DIR / "best_model.pkl")
+    tfidf = joblib.load(DATA_DIR / "tfidf_vectorizer.pkl")
+    le    = joblib.load(DATA_DIR / "label_encoder.pkl")
+    logger.info(f"  RF : {rf.n_estimators} arbres, classes : {le.classes_}")
+    return rf, tfidf, le
+
+
+# ══════════════════════════════════════════════════════════════════
+# PRÉPARATION DES FEATURES (enrichies v2)
+# ══════════════════════════════════════════════════════════════════
+
+def prepare_features_v2(texts, rf_model, tfidf):
+    """
+    Features pour le correcteur v2 :
+      - Probabilités RF (3)         : sortie du modèle immuable
+      - TF-IDF top-500 (500)        : contexte textuel réduit
+      - Features structurelles (20) : URL, style, HTML (identiques à NB02)
+
+    Total : 523 features/email.
+
+    L'enrichissement vs v1 (508 features) tient principalement à l'ajout
+    des features structurelles complètes au lieu des 5 features légères.
+    """
+    import re
+    import html as html_lib
+    from urllib.parse import urlparse
+    from scipy.sparse import hstack, csr_matrix
+
+    BLACKLISTED_TLDS = {
+        'xyz','info','biz','club','online','site','top','win','gq','tk','ml',
+        'ga','cf','pw','cc','ws','icu','live','click','link','loan','work','men',
+    }
+    BRANDS = [
+        'paypal','amazon','microsoft','apple','google','netflix','facebook',
+        'instagram','dhl','fedex','ups','irs','bank','secure','login','verify',
+        'account','update','confirm','coinbase','binance','zoom',
+    ]
+
+    def quick_clean(text):
+        text = html_lib.unescape(str(text))
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'https?://\S+', ' urltoken ', text)
+        text = text.lower()
+        return text
+
+    def struct_feats_20(text):
+        """20 features structurelles — identiques à extract_structural_features() de pipeline_v2."""
+        urls  = re.findall(r'https?://[^\s<>"]+', text)
+        words = text.split()
+        alpha = [c for c in text if c.isalpha()]
+        ip_url   = sum(1 for u in urls if re.search(r'https?://\d{1,3}\.\d{1,3}', u))
+        susp_tld = sum(1 for u in urls
+                       if urlparse(u).netloc.rsplit('.',1)[-1] in BLACKLISTED_TLDS)
+        brand    = sum(1 for u in urls for b in BRANDS if b in u.lower())
+        return [
+            len(urls),
+            int(ip_url > 0),
+            int(susp_tld > 0),
+            int(brand > 0),
+            max((len(u) for u in urls), default=0),
+            float(np.mean([len(u) for u in urls])) if urls else 0.0,
+            float(np.mean([urlparse(u).netloc.count('.')-1 for u in urls])) if urls else 0.0,
+            int(any('@' in u for u in urls)),
+            sum(c.isdigit() for u in urls for c in u) / max(sum(len(u) for u in urls), 1),
+            sum(len(re.findall(r'[%@#!$&*]', u)) for u in urls),
+            len(text),
+            len(words),
+            text.count('!'),
+            text.count('?'),
+            text.count('$'),
+            sum(1 for c in alpha if c.isupper()) / max(len(alpha), 1),
+            sum(c.isdigit() for c in text) / max(len(text), 1),
+            int(bool(re.search(r'<[a-zA-Z][^>]*>', text))),
+            float(np.mean([len(w) for w in words])) if words else 0.0,
+            len(set(words)) / max(len(words), 1),
+        ]
+
+    cleaned = [quick_clean(t) for t in texts]
+
+    # TF-IDF complet pour RF (10 000 features)
+    X_tfidf_full = tfidf.transform(cleaned)
+
+    # Prédictions RF (3 probabilités par email)
+    X_struct_dummy = csr_matrix(np.zeros((len(texts), 20)))
+    try:
+        X_for_rf = hstack([X_tfidf_full, X_struct_dummy])
+        rf_proba = rf_model.predict_proba(X_for_rf)
+    except Exception:
+        rf_proba = rf_model.predict_proba(X_tfidf_full)
+
+    # TF-IDF réduit top-500 par variance
+    if X_tfidf_full.shape[1] > 500:
+        variances = np.asarray(X_tfidf_full.power(2).mean(axis=0)).flatten()
+        top500    = np.argsort(variances)[-500:]
+        X_tfidf_small = X_tfidf_full[:, top500]
+    else:
+        X_tfidf_small = X_tfidf_full
+
+    # Features structurelles complètes (20)
+    X_struct = csr_matrix([struct_feats_20(t) for t in texts])
+
+    # Assemblage final : (3 + 500 + 20) = 523 features
+    X = hstack([csr_matrix(rf_proba), X_tfidf_small, X_struct])
+    return X, rf_proba
+
+
+# ══════════════════════════════════════════════════════════════════
+# CHARGEMENT ET SAUVEGARDE DU CORRECTEUR
+# ══════════════════════════════════════════════════════════════════
+
+def load_corrector():
+    import joblib
+    from sklearn.linear_model import SGDClassifier
+
+    if CORRECTOR_PKL.exists():
+        c = joblib.load(CORRECTOR_PKL)
+        logger.info(f"Correcteur chargé ({CORRECTOR_PKL.name})")
+        return c
+
+    # Premier lancement
+    c = SGDClassifier(
+        loss="modified_huber",  # Probabilités via predict_proba
+        alpha=0.001,
+        max_iter=100,
+        tol=1e-4,
+        random_state=42,
+    )
+    logger.info("Nouveau correcteur SGD créé.")
+    return c
+
+
+def save_corrector(corrector):
+    import joblib
+    if CORRECTOR_PKL.exists():
+        ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = BACKUP_DIR / f"corrector_{ts}.pkl"
+        shutil.copy2(CORRECTOR_PKL, backup)
+    joblib.dump(corrector, CORRECTOR_PKL, compress=3)
+    logger.info(f"Correcteur sauvegardé.")
+
+
+# ══════════════════════════════════════════════════════════════════
+# CHARGEMENT DES CORRECTIONS
+# ══════════════════════════════════════════════════════════════════
+
+def load_corrections():
+    if not FEEDBACK_FILE.exists():
+        return []
+    corrections = []
+    with open(FEEDBACK_FILE, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+                if e.get("text") and e.get("label") in CLASS_NAMES:
+                    corrections.append(e)
+            except Exception:
+                pass
+    return corrections
+
+
+def mark_done(corrections):
+    done_path = LOGS_DIR / "feedback_applied.jsonl"
+    with open(done_path, "a", encoding="utf-8") as f:
+        for c in corrections:
+            c["applied_at"] = datetime.now().isoformat()
+            f.write(json.dumps(c, ensure_ascii=False) + "\n")
+    FEEDBACK_FILE.write_text("", encoding="utf-8")
+    logger.info(f"{len(corrections)} corrections appliquées et archivées.")
+
+
+# ══════════════════════════════════════════════════════════════════
+# MISE À JOUR INCRÉMENTALE V2
+# ══════════════════════════════════════════════════════════════════
+
+def update_corrector_v2(corrections, rf_model, tfidf, force=False):
+    """
+    Mise à jour incrémentale avec spam oversampling.
+
+    Spam oversampling :
+      Le biais RF contre spam est structurel (corpus Enron mal labellisé).
+      Pour le compenser, les corrections spam sont dupliquées x3 avant
+      le partial_fit(). Cela augmente leur poids dans la mise à jour
+      sans modifier le corpus d'origine.
+
+      Ce n'est pas du data augmentation agressif — c'est un ajustement
+      de l'importance des exemples, équivalent à multiplier leur
+      learning rate effectif.
+    """
+    from sklearn.metrics import f1_score, classification_report
+    from sklearn.utils.class_weight import compute_class_weight
+
+    if len(corrections) < MIN_CORRECTIONS and not force:
+        logger.info(f"{len(corrections)} / {MIN_CORRECTIONS} corrections minimum.")
+        return False
+
+    # Séparer par source
+    user_corrections  = [c for c in corrections if c.get("source") == "user_feedback"]
+    auto_labels       = [c for c in corrections if c.get("source") == "auto_label"]
+    logger.info(f"Corrections : {len(user_corrections)} manuelles + {len(auto_labels)} auto-labels")
+
+    # Spam oversampling : dupliquer les corrections spam x3
+    spam_corrections = [c for c in corrections if c.get("label") == "spam"]
+    oversampled      = corrections + spam_corrections * 2  # x3 total
+    logger.info(f"Après spam oversampling : {len(oversampled)} exemples "
+                f"({len(spam_corrections)} spam × 3)")
+
+    texts  = [c["text"]  for c in oversampled]
+    labels = [c["label"] for c in oversampled]
+
+    logger.info(f"Préparation des features ({len(texts)} exemples)...")
+    X, rf_proba = prepare_features_v2(texts, rf_model, tfidf)
+    y = np.array([LABEL2ID[l] for l in labels])
+
+    corrector = load_corrector()
+
+    # Poids de classe (remplace class_weight="balanced" incompatible avec partial_fit)
+    classes_present = list(range(len(CLASS_NAMES)))
+    try:
+        weights = compute_class_weight("balanced", classes=classes_present, y=y)
+        sample_weight = np.array([weights[yi] for yi in y])
+    except Exception:
+        sample_weight = None
+
+    logger.info("Mise à jour incrémentale (partial_fit)...")
+    corrector.partial_fit(
+        X, y,
+        classes=classes_present,
+        sample_weight=sample_weight,
+    )
+
+    # Évaluation par classe
+    y_pred = corrector.predict(X)
+    f1_macro = f1_score(y, y_pred, average="macro", zero_division=0)
+    present  = sorted(set(y))
+
+    logger.info(f"\nF1-Macro : {f1_macro:.4f}")
+    logger.info("\n" + classification_report(
+        y, y_pred,
+        labels=present,
+        target_names=[CLASS_NAMES[i] for i in present],
+        zero_division=0,
+    ))
+
+    # Alerte spam recall
+    for i, cls in enumerate(CLASS_NAMES):
+        if cls == "spam" and i in present:
+            mask   = (y == i)
+            recall = (y_pred[mask] == i).mean() if mask.sum() > 0 else 0.0
+            if recall < 0.50:
+                logger.warning(
+                    f"⚠ Spam recall faible ({recall:.2f}). "
+                    f"Ajouter plus de corrections spam via l'extension ShieldMail."
+                )
+
+    # Sauvegarder le correcteur
+    save_corrector(corrector)
+    mark_done(corrections)
+
+    # Historique
+    _save_history(f1_macro, len(corrections), len(spam_corrections))
+
+    logger.info("Mise à jour terminée. Rechargement automatique via /reload-corrector.")
+    return True
+
+
+def _save_history(f1: float, n_total: int, n_spam: int):
+    history = []
+    if HISTORY_FILE.exists():
+        try:
+            with open(HISTORY_FILE) as f:
+                history = json.load(f)
+        except Exception:
+            pass
+    history.append({
+        "ts":      datetime.now().isoformat(),
+        "f1":      round(f1, 4),
+        "n_total": n_total,
+        "n_spam":  n_spam,
+    })
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history[-50:], f, indent=2)  # Garder les 50 derniers
+
+
+# ══════════════════════════════════════════════════════════════════
+# ÉVALUATION DU CORRECTEUR ACTUEL
+# ══════════════════════════════════════════════════════════════════
+
+def evaluate_corrector():
+    """Évalue le correcteur sur les corrections appliquées (historical)."""
+    import joblib
+    from sklearn.metrics import classification_report, confusion_matrix
+
+    applied_file = LOGS_DIR / "feedback_applied.jsonl"
+    if not applied_file.exists():
+        logger.info("Aucun historique de corrections appliquées.")
+        return
+
+    corrections = []
+    with open(applied_file) as f:
+        for line in f:
+            try:
+                e = json.loads(line.strip())
+                if e.get("text") and e.get("label") in CLASS_NAMES:
+                    corrections.append(e)
+            except Exception:
+                pass
+
+    if len(corrections) < 10:
+        logger.info(f"Pas assez de corrections pour évaluer ({len(corrections)}).")
+        return
+
+    logger.info(f"\nÉvaluation sur {len(corrections)} corrections historiques...")
+    rf_model, tfidf, _ = load_base_models()
+
+    X, rf_proba = prepare_features_v2(
+        [c["text"] for c in corrections], rf_model, tfidf
+    )
+    y_true = np.array([LABEL2ID[c["label"]] for c in corrections])
+
+    # Prédiction RF seul
+    y_rf = np.argmax(rf_proba, axis=1)
+    logger.info("\n=== Random Forest seul ===")
+    logger.info(classification_report(
+        y_true, y_rf,
+        target_names=CLASS_NAMES, zero_division=0
+    ))
+
+    # Prédiction avec correcteur
+    if CORRECTOR_PKL.exists():
+        corrector = joblib.load(CORRECTOR_PKL)
+        y_corr    = corrector.predict(X)
+        logger.info("\n=== Correcteur SGD (par-dessus RF) ===")
+        logger.info(classification_report(
+            y_true, y_corr,
+            target_names=CLASS_NAMES, zero_division=0
+        ))
+        logger.info("\nMatrice de confusion (RF → correcteur) :")
+        cm_rf   = confusion_matrix(y_true, y_rf)
+        cm_corr = confusion_matrix(y_true, y_corr)
+        logger.info(f"RF     : {cm_rf.tolist()}")
+        logger.info(f"Correc.: {cm_corr.tolist()}")
+    else:
+        logger.info("Pas de correcteur sauvegardé.")
+
+    # Historique des mises à jour
+    if HISTORY_FILE.exists():
+        with open(HISTORY_FILE) as f:
+            history = json.load(f)
+        logger.info(f"\nHistorique ({len(history)} mises à jour) :")
+        for h in history[-5:]:
+            logger.info(f"  {h['ts'][:16]}  F1={h['f1']:.4f}  "
+                        f"n={h['n_total']} (spam={h['n_spam']})")
+
+
+# ══════════════════════════════════════════════════════════════════
+# POINT D'ENTRÉE
+# ══════════════════════════════════════════════════════════════════
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Correcteur incrémental v2 — Spam oversampling + features enrichies"
+    )
+    parser.add_argument("--show",   action="store_true", help="Corrections en attente")
+    parser.add_argument("--force",  action="store_true", help="Forcer même avec peu")
+    parser.add_argument("--reset",  action="store_true", help="Remettre à zéro")
+    parser.add_argument("--eval",   action="store_true", help="Évaluer le correcteur actuel")
+    args = parser.parse_args()
+
+    if args.reset:
+        if CORRECTOR_PKL.exists():
+            ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup = BACKUP_DIR / f"corrector_RESET_{ts}.pkl"
+            shutil.copy2(CORRECTOR_PKL, backup)
+            CORRECTOR_PKL.unlink()
+            logger.info(f"Correcteur réinitialisé. Backup : {backup.name}")
+        return
+
+    if args.eval:
+        evaluate_corrector()
+        return
+
+    corrections = load_corrections()
+
+    if args.show:
+        from collections import Counter
+        print(f"\nCorrections en attente : {len(corrections)}")
+        if corrections:
+            labels = Counter(c["label"] for c in corrections)
+            src    = Counter(c.get("source","?") for c in corrections)
+            print("Labels :")
+            for k, v in labels.most_common():
+                print(f"  {k:12s} : {v}")
+            print("Sources :")
+            for k, v in src.most_common():
+                print(f"  {k:20s} : {v}")
+        print(f"Correcteur existant : {CORRECTOR_PKL.exists()}")
+        print(f"Seuil minimum       : {MIN_CORRECTIONS}")
+        return
+
+    if not corrections:
+        logger.info("Aucune correction disponible.")
+        return
+
+    rf_model, tfidf, _ = load_base_models()
+    update_corrector_v2(corrections, rf_model, tfidf, force=args.force)
+
+
+if __name__ == "__main__":
+    main()

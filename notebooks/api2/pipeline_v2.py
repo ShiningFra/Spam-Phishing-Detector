@@ -1,0 +1,944 @@
+# -*- coding: utf-8 -*-
+"""
+pipeline_v2.py
+==============
+Version améliorée du pipeline hybride — sans réentraîner le modèle de base.
+
+Améliorations par rapport à v1 :
+  1. SpamBooster     — couche dédiée à la détection spam (règles + lexique étendu)
+  2. AdaptiveWeights — poids d'agrégation ajustés selon la confiance par classe
+  3. SpamLexicon      — 80+ patterns spam (finance, pharma, marketing, arnaques)
+  4. Correcteur SGD  — features enrichies (20 structurelles + contexte temporel)
+  5. AutoTrigger     — déclenchement automatique du correcteur sans seuil fixe
+  6. ExplainEngine   — explication en langage naturel de chaque décision
+"""
+
+import re
+import html
+import logging
+import joblib
+import numpy as np
+from pathlib import Path
+from typing import Optional, Tuple, Dict, List
+from urllib.parse import urlparse
+from scipy.sparse import hstack, csr_matrix
+from dataclasses import dataclass, field
+from datetime import datetime
+
+logger = logging.getLogger("spam_detector_v2")
+
+DATA_DIR       = Path(__file__).parent.parent / "data"
+CORRECTOR_PATH = DATA_DIR / "incremental_corrector.pkl"
+WHITELIST_PATH = DATA_DIR / "whitelist_domains.txt"
+STATS_PATH     = DATA_DIR / "pipeline_stats.json"
+
+# ══════════════════════════════════════════════════════════════════
+# LISTES ÉTENDUES
+# ══════════════════════════════════════════════════════════════════
+
+BLACKLISTED_TLDS = {
+    'xyz','info','biz','club','online','site','top','win','gq','tk','ml',
+    'ga','cf','pw','cc','ws','icu','live','click','link','loan','work','men',
+    'download','stream','party','review','science','trade','date','faith',
+}
+
+IMPERSONATED_BRANDS = [
+    'paypal','amazon','microsoft','apple','google','netflix','facebook',
+    'instagram','dhl','fedex','ups','irs','bank','secure','login','verify',
+    'account','update','confirm','coinbase','binance','zoom','docusign',
+    'linkedin','twitter','dropbox','sharepoint','onedrive','office365',
+    'wellsfargo','citibank','chase','barclays','santander','bnp','societegenerale',
+    'mtn','orange','airtel','momo','orangemoney',
+]
+
+# Lexique SPAM enrichi — 4 catégories
+SPAM_LEXICON = {
+    # Finance / investissement
+    'financial': [
+        'guaranteed return','double your investment','risk free','no risk',
+        'earn cash fast','make money online','work from home earn','passive income',
+        'forex trading signals','crypto signals guaranteed','investment opportunity',
+        'million dollar','100% profit','1000% roi','minimum investment',
+        'wire transfer','western union','bitcoin profit','secret method',
+        'financial freedom','retire early','quit your job',
+        'rendement garanti','argent facile','investissement rentable',
+        'gain rapide','devenir riche','revenus passifs',
+    ],
+    # Pharma / santé
+    'pharma': [
+        'no prescription','buy viagra','buy cialis','cheap meds','online pharmacy',
+        'weight loss pills','fat burner','lose weight fast','diet pill',
+        'boost testosterone','male enhancement','erectile dysfunction',
+        'herbal remedy','miracle cure','anti-aging','detox cleanse',
+    ],
+    # Marketing agressif
+    'marketing': [
+        'click here now','act now','limited time offer','offer expires',
+        'you have been selected','exclusive offer','free gift','claim your prize',
+        'you won','congratulations you','winner notification','you are the winner',
+        'cash prize','lottery winner','sweepstakes','reward points',
+        'unsubscribe below','this is not spam','remove me from',
+        'this email was sent','if you no longer wish',
+    ],
+    # Arnaques / social engineering
+    'scam': [
+        'nigerian prince','inheritance funds','unclaimed funds',
+        'bank of africa','dying billionaire','transfer funds',
+        'keep confidential','strictly confidential','god bless you',
+        'dear beloved','my dear friend','foreign business',
+        'business proposal','mutual benefit','percent commission',
+        'i am the son of','attorney at law','legal document attached',
+        'arnaque','héritage','fonds bloqués','transfert urgent',
+    ],
+}
+
+# Tous les patterns spam en liste plate
+ALL_SPAM_PATTERNS = [p for cat in SPAM_LEXICON.values() for p in cat]
+
+PHISHING_KEYWORDS = [
+    'verify your account','confirm your identity','suspended','unusual activity',
+    'security alert','update your password','click to verify',
+    'your account will be','immediately','within 24 hours','unauthorized access',
+    'confirm now','validate your','authenticate','one-time password',
+    'otp code','suspicious login','unusual sign-in','locked account',
+    'verify now','reactivate','limited access','restricted',
+]
+
+# Whitelist de domaines légitimes (newsletter, marketing)
+DEFAULT_WHITELIST = {
+    'duolingo.com','emails.duolingo.com',
+    'microsoft.com','em-assets.microsoft.com','account.microsoft.com',
+    'linkedin.com','e.linkedin.com',
+    'github.com','notifications.github.com',
+    'amazon.com','ses.amazonaws.com',
+    'google.com','accounts.google.com',
+    'dropbox.com','notify.dropbox.com',
+    'slack.com','mail.slack.com',
+    'twitter.com','notifications.twitter.com',
+    'notion.so','mail.notion.so',
+    'zoom.us','mail.zoom.us',
+}
+
+
+# ══════════════════════════════════════════════════════════════════
+# NETTOYAGE TEXTE
+# ══════════════════════════════════════════════════════════════════
+
+try:
+    import nltk
+    from nltk.corpus import stopwords
+    from nltk.stem   import WordNetLemmatizer
+    nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet',   quiet=True)
+    STOP_WORDS = set(stopwords.words('english'))
+    LEMMATIZER = WordNetLemmatizer()
+    NLTK_OK    = True
+except Exception:
+    STOP_WORDS = set()
+    LEMMATIZER = None
+    NLTK_OK    = False
+
+_RE_HTML  = re.compile(r'<[^>]+>')
+_RE_URL   = re.compile(r'https?://\S+|www\.\S+')
+_RE_EMAIL = re.compile(r'[\w.+-]+@[\w-]+\.[\w.]+')
+_RE_NUM   = re.compile(r'\b\d+\b')
+_RE_PUNCT = re.compile(r'[^\w\s]')
+
+def clean_text(text: str) -> str:
+    if not isinstance(text, str): return ''
+    text = html.unescape(text)
+    text = _RE_HTML.sub(' ', text)
+    text = _RE_URL.sub(' urltoken ', text)
+    text = _RE_EMAIL.sub(' emailtoken ', text)
+    text = text.lower()
+    text = _RE_NUM.sub(' numtoken ', text)
+    text = _RE_PUNCT.sub(' ', text)
+    tokens = text.split()
+    if NLTK_OK:
+        tokens = [LEMMATIZER.lemmatize(t) for t in tokens
+                  if t not in STOP_WORDS or t in ('urltoken','emailtoken')]
+    return ' '.join(t for t in tokens if len(t) >= 2)
+
+
+# ══════════════════════════════════════════════════════════════════
+# FEATURES STRUCTURELLES (20 features — identiques à NB02)
+# ══════════════════════════════════════════════════════════════════
+
+def extract_structural_features(text: str) -> dict:
+    urls  = re.findall(r'https?://[^\s<>"]+', text)
+    words = text.split()
+    alpha = [c for c in text if c.isalpha()]
+    ip_url   = sum(1 for u in urls if re.search(r'https?://\d{1,3}\.\d{1,3}', u))
+    susp_tld = sum(1 for u in urls
+                   if urlparse(u).netloc.rsplit('.',1)[-1] in BLACKLISTED_TLDS)
+    brand    = sum(1 for u in urls for b in IMPERSONATED_BRANDS if b in u.lower())
+    return {
+        'url_count':           len(urls),
+        'has_ip_url':          int(ip_url > 0),
+        'has_suspicious_tld':  int(susp_tld > 0),
+        'has_brand_in_url':    int(brand > 0),
+        'url_max_length':      max((len(u) for u in urls), default=0),
+        'url_avg_length':      float(np.mean([len(u) for u in urls])) if urls else 0.0,
+        'url_subdomain_count': float(np.mean([urlparse(u).netloc.count('.')-1
+                                              for u in urls])) if urls else 0.0,
+        'has_at_in_url':       int(any('@' in u for u in urls)),
+        'url_digit_ratio':     sum(c.isdigit() for u in urls for c in u)
+                               / max(sum(len(u) for u in urls), 1),
+        'url_special_char':    sum(len(re.findall(r'[%@#!$&*]', u)) for u in urls),
+        'char_count':          len(text),
+        'word_count':          len(words),
+        'exclamation_count':   text.count('!'),
+        'question_count':      text.count('?'),
+        'dollar_count':        text.count('$'),
+        'uppercase_ratio':     sum(1 for c in alpha if c.isupper()) / max(len(alpha), 1),
+        'digit_ratio':         sum(c.isdigit() for c in text) / max(len(text), 1),
+        'has_html':            int(bool(re.search(r'<[a-zA-Z][^>]*>', text))),
+        'avg_word_length':     float(np.mean([len(w) for w in words])) if words else 0.0,
+        'unique_word_ratio':   len(set(words)) / max(len(words), 1),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════
+# COUCHE 0 — WHITELIST (nouveau)
+# ══════════════════════════════════════════════════════════════════
+
+class WhitelistEngine:
+    """
+    Domaines marketing légitimes connus → bypass du pipeline ML.
+    Résout le problème des faux positifs newsletters.
+    """
+    def __init__(self):
+        self.domains = set(DEFAULT_WHITELIST)
+        self._load_custom()
+
+    def _load_custom(self):
+        if WHITELIST_PATH.exists():
+            with open(WHITELIST_PATH) as f:
+                for line in f:
+                    d = line.strip().lower()
+                    if d and not d.startswith('#'):
+                        self.domains.add(d)
+
+    def is_whitelisted(self, text: str, sender_domain: str = '') -> Tuple[bool, str]:
+        """Retourne (whitelisted, raison)."""
+        # Vérifier le domaine expéditeur
+        if sender_domain:
+            for wd in self.domains:
+                if sender_domain == wd or sender_domain.endswith('.' + wd):
+                    return True, f'sender_whitelisted:{sender_domain}'
+
+        # Vérifier les URLs dans le corps
+        urls = re.findall(r'https?://[^\s<>"]+', text)
+        for url in urls:
+            host = urlparse(url).netloc.lower().lstrip('www.')
+            for wd in self.domains:
+                if host == wd or host.endswith('.' + wd):
+                    return True, f'url_domain_whitelisted:{host}'
+        return False, ''
+
+    def add_domain(self, domain: str):
+        self.domains.add(domain.lower().strip())
+        with open(WHITELIST_PATH, 'a') as f:
+            f.write(f'{domain.lower().strip()}\n')
+        logger.info(f'Whitelist: ajout de {domain}')
+
+
+# ══════════════════════════════════════════════════════════════════
+# COUCHE 1 — RÈGLES HEURISTIQUES + SPAM BOOSTER (améliorée)
+# ══════════════════════════════════════════════════════════════════
+
+class HeuristicLayer:
+    """
+    Couche 1 améliorée avec SpamBooster dédié.
+
+    Problème v1 : le spam était sous-détecté car les règles heuristiques
+    étaient trop génériques. Les newsletters légitimes déclenchaient
+    les mêmes patterns que le spam.
+
+    Solution v2 : lexique spam catégorisé + scoring par catégorie
+    + pénalité si whitelist déclenchée.
+    """
+
+    # Scores par catégorie de spam (calibrés empiriquement)
+    SPAM_CATEGORY_WEIGHTS = {
+        'financial': 0.35,   # Signal le plus fort
+        'scam':      0.30,
+        'pharma':    0.25,
+        'marketing': 0.12,   # Le plus ambigu (newsletters légitimes)
+    }
+
+    def analyze(self, text: str, is_whitelisted: bool = False
+                ) -> Tuple[float, float, List[str], List[str]]:
+        if not isinstance(text, str):
+            return 0.0, 0.0, [], []
+
+        tl = text.lower()
+        spam_pts, phish_pts = 0.0, 0.0
+        rules, url_flags    = [], []
+
+        # ── Spam : style ────────────────────────────────────────
+        excl = text.count('!')
+        if excl >= 3:
+            pts = min(excl * 0.04, 0.20)
+            spam_pts += pts
+            rules.append(f'exclamation_x{excl}(+{pts:.2f})')
+
+        alpha = [c for c in text if c.isalpha()]
+        up_r  = sum(1 for c in alpha if c.isupper()) / max(len(alpha), 1)
+        if up_r > 0.30:
+            spam_pts += 0.18
+            rules.append(f'uppercase_{up_r:.0%}(+0.18)')
+
+        if text.count('$') >= 2:
+            spam_pts += 0.12
+            rules.append('dollar_signs(+0.12)')
+
+        # ── Spam : lexique catégorisé ────────────────────────────
+        for category, patterns in SPAM_LEXICON.items():
+            hits   = [p for p in patterns if p in tl]
+            weight = self.SPAM_CATEGORY_WEIGHTS[category]
+            if hits:
+                # Score cumulatif plafonné par catégorie
+                cat_score = min(len(hits) * weight, weight * 2)
+                # Atténuation si whitelist (newsletters légitimes)
+                if is_whitelisted and category == 'marketing':
+                    cat_score *= 0.2
+                spam_pts += cat_score
+                rules.append(f'spam_{category}_x{len(hits)}(+{cat_score:.2f})')
+
+        # ── Phishing : URLs ──────────────────────────────────────
+        urls = re.findall(r'https?://[^\s<>"]+', text)
+        for url in urls:
+            try:
+                parsed = urlparse(url)
+                h = parsed.netloc.lower()
+
+                # IP brute
+                if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', h):
+                    phish_pts += 0.40
+                    url_flags.append(f'ip_url:{url[:50]}')
+
+                # TLD suspect
+                tld = h.rsplit('.', 1)[-1] if '.' in h else ''
+                if tld in BLACKLISTED_TLDS:
+                    phish_pts += 0.25
+                    url_flags.append(f'suspicious_tld:.{tld}')
+
+                # Marque usurpée dans le domaine
+                for brand in IMPERSONATED_BRANDS:
+                    if brand in h and not h.endswith(f'{brand}.com') \
+                       and not h.endswith(f'{brand}.fr') \
+                       and not h.endswith(f'{brand}.net'):
+                        phish_pts += 0.30
+                        url_flags.append(f'brand_impersonation:{brand}@{h}')
+                        break
+
+                # @ dans l'URL (obfuscation RFC)
+                if '@' in parsed.netloc:
+                    phish_pts += 0.35
+                    url_flags.append('at_in_url')
+
+                # Sous-domaine suspect très long (typosquatting)
+                subdomain_parts = h.split('.')
+                if len(subdomain_parts) > 3:
+                    longest = max(len(p) for p in subdomain_parts[:-2])
+                    if longest > 20:
+                        phish_pts += 0.15
+                        url_flags.append(f'long_subdomain:{h[:40]}')
+
+            except Exception:
+                pass
+
+        # ── Phishing : mots-clés ─────────────────────────────────
+        for kw in PHISHING_KEYWORDS:
+            if kw in tl:
+                phish_pts += 0.08
+                rules.append(f'phish_kw:{kw}')
+
+        # ── Caractères Unicode invisibles ────────────────────────
+        invisible = sum(1 for c in text if ord(c) in range(0x200B, 0x200F))
+        if invisible:
+            phish_pts += 0.40
+            rules.append(f'invisible_unicode_x{invisible}')
+
+        # ── URL dans base64/encodage ─────────────────────────────
+        if re.search(r'%[0-9a-fA-F]{2}', text):
+            phish_pts += 0.10
+            rules.append('url_percent_encoding')
+
+        return min(spam_pts, 1.0), min(phish_pts, 1.0), rules, url_flags
+
+
+# ══════════════════════════════════════════════════════════════════
+# COUCHE 2 — ANALYSE HEADERS (identique à v1 mais enrichie)
+# ══════════════════════════════════════════════════════════════════
+
+import email as email_lib
+
+def analyze_headers(raw_email: str) -> Tuple[float, List[str], str]:
+    """
+    Retourne (score_phishing, flags, sender_domain).
+    sender_domain est utilisé par la whitelist.
+    """
+    try:
+        msg = email_lib.message_from_string(raw_email)
+    except Exception:
+        return 0.0, ['parse_error'], ''
+
+    flags, score = [], 0.0
+
+    def dom(addr: str) -> str:
+        m = re.search(r'@([\w.-]+)', addr or '')
+        return m.group(1).lower() if m else ''
+
+    from_dom   = dom(msg.get('From', ''))
+    reply_dom  = dom(msg.get('Reply-To', ''))
+    return_dom = dom(msg.get('Return-Path', ''))
+
+    # SPF
+    spf = msg.get('Received-SPF', '').lower()
+    if 'fail' in spf or 'softfail' in spf:
+        score += 0.35; flags.append('spf_fail')
+    elif 'pass' in spf:
+        score -= 0.10; flags.append('spf_pass')
+    else:
+        score += 0.10; flags.append('spf_missing')
+
+    # DKIM
+    if not msg.get('DKIM-Signature', ''):
+        score += 0.15; flags.append('dkim_missing')
+    else:
+        flags.append('dkim_present')
+
+    # DMARC
+    dmarc = msg.get('Authentication-Results', '').lower()
+    if 'dmarc=fail' in dmarc:
+        score += 0.40; flags.append('dmarc_fail')
+    elif 'dmarc=pass' in dmarc:
+        score -= 0.15; flags.append('dmarc_pass')
+
+    # Cohérence domaines
+    if reply_dom and from_dom and reply_dom != from_dom:
+        score += 0.30
+        flags.append(f'domain_mismatch:from={from_dom},reply={reply_dom}')
+    if return_dom and from_dom and return_dom != from_dom:
+        score += 0.20
+        flags.append(f'return_path_mismatch:{return_dom}')
+
+    return max(0.0, min(score, 1.0)), flags, from_dom
+
+
+# ══════════════════════════════════════════════════════════════════
+# POIDS ADAPTATIFS (nouveau — remplace les poids fixes)
+# ══════════════════════════════════════════════════════════════════
+
+class AdaptiveWeights:
+    """
+    Ajuste dynamiquement les poids d'agrégation selon le contexte.
+
+    Problème v1 : poids fixes (rules=0.20, headers=0.25, ml=0.55)
+    quel que soit le signal disponible.
+
+    Solution v2 : les poids évoluent selon :
+    - La disponibilité des headers (raw_email fourni ou non)
+    - La force du signal heuristique
+    - La confiance du modèle ML
+    - La présence du correcteur SGD actif
+    """
+
+    BASE = {'rules': 0.20, 'headers': 0.25, 'ml': 0.55}
+
+    def compute(self,
+                rule_spam: float,
+                rule_phish: float,
+                header_score: float,
+                has_headers: bool,
+                has_corrector: bool,
+                ml_max_conf: float) -> Dict[str, float]:
+        w = dict(self.BASE)
+
+        # Pas de headers → redistribuer vers les règles et ML
+        if not has_headers:
+            w['rules'] += w['headers'] * 0.4
+            w['ml']    += w['headers'] * 0.6
+            w['headers'] = 0.0
+
+        # Signal heuristique très fort → augmenter son poids
+        max_rule = max(rule_spam, rule_phish)
+        if max_rule > 0.70:
+            boost = min((max_rule - 0.70) * 0.3, 0.15)
+            w['rules'] += boost
+            w['ml']    -= boost * 0.6
+            w['headers'] -= boost * 0.4
+
+        # ML très confiant → augmenter son poids
+        if ml_max_conf > 0.85:
+            boost = min((ml_max_conf - 0.85) * 0.5, 0.10)
+            w['ml']    += boost
+            w['rules'] -= boost
+
+        # Correcteur actif → légère augmentation ML (correcteur inclus dans ML)
+        if has_corrector:
+            w['ml'] = min(w['ml'] + 0.05, 0.70)
+            w['rules'] = max(w['rules'] - 0.05, 0.10)
+
+        # Normaliser
+        total = sum(w.values())
+        return {k: v / total for k, v in w.items()}
+
+
+# ══════════════════════════════════════════════════════════════════
+# MOTEUR D'EXPLICATION (nouveau)
+# ══════════════════════════════════════════════════════════════════
+
+class ExplainEngine:
+    """
+    Génère une explication en langage naturel de la décision.
+    Utile pour l'interface ShieldMail et l'audit.
+    """
+
+    TEMPLATES = {
+        'phishing': [
+            "Cet email présente {n_signals} signaux de phishing. {main_reason}",
+            "Email de phishing probable : {main_reason}.",
+        ],
+        'spam': [
+            "Cet email contient {n_signals} indicateurs spam ({categories}). {main_reason}",
+            "Spam détecté : {main_reason}.",
+        ],
+        'ham': [
+            "Aucun signal d'alerte significatif détecté. Email probablement légitime.",
+            "Email classifié comme légitime (confiance : {conf:.0%}).",
+        ],
+    }
+
+    def explain(self, predicted: str, confidence: float,
+                rules: List[str], header_flags: List[str],
+                url_flags: List[str]) -> str:
+        signals = rules + header_flags + url_flags
+        n = len(signals)
+        conf = confidence
+
+        if predicted == 'ham':
+            return self.TEMPLATES['ham'][0] if n == 0 else \
+                   f"Email probablement légitime malgré {n} signal(s) mineur(s) (confiance : {conf:.0%})."
+
+        if predicted == 'phishing':
+            reasons = []
+            if any('ip_url' in s for s in url_flags):
+                reasons.append("URL avec adresse IP brute détectée")
+            if any('brand_impersonation' in s for s in url_flags):
+                reasons.append("marque connue usurpée dans l'URL")
+            if any('spf_fail' in s for s in header_flags):
+                reasons.append("échec SPF (domaine expéditeur falsifié probable)")
+            if any('dmarc_fail' in s for s in header_flags):
+                reasons.append("échec DMARC")
+            if any('domain_mismatch' in s for s in header_flags):
+                reasons.append("expéditeur From ≠ Reply-To")
+            if any('invisible_unicode' in s for s in rules):
+                reasons.append("caractères invisibles détectés (obfuscation)")
+            main = ". ".join(reasons[:2]) if reasons else "patterns de phishing détectés"
+            return f"Email de phishing probable ({conf:.0%}) : {main}."
+
+        if predicted == 'spam':
+            categories = []
+            for r in rules:
+                if 'spam_financial' in r: categories.append("investissement frauduleux")
+                elif 'spam_scam' in r: categories.append("arnaque")
+                elif 'spam_pharma' in r: categories.append("produit pharmaceutique")
+                elif 'spam_marketing' in r: categories.append("marketing agressif")
+            cats = ", ".join(set(categories)) if categories else "contenu non sollicité"
+            main = f"Catégorie(s) : {cats}"
+            return f"Spam détecté ({conf:.0%}) — {n} signal(s). {main}."
+
+        return f"Classifié comme {predicted} (confiance : {conf:.0%})."
+
+
+# ══════════════════════════════════════════════════════════════════
+# CORRECTEUR SGD ENRICHI
+# ══════════════════════════════════════════════════════════════════
+
+def _load_corrector():
+    if CORRECTOR_PATH.exists():
+        try:
+            c = joblib.load(CORRECTOR_PATH)
+            logger.info("Correcteur SGD chargé.")
+            return c
+        except Exception as e:
+            logger.warning(f"Correcteur non chargé : {e}")
+    return None
+
+
+def _apply_corrector(corrector, rf_proba_dict: dict,
+                     X_tfidf, struct_feats: dict,
+                     class_names: list) -> dict:
+    """
+    Fusion RF + correcteur SGD.
+
+    Améliorations v2 :
+    - Features enrichies : TF-IDF top-500 + 20 features structurelles
+    - Fusion adaptative : poids selon confiance ET selon la classe prédite
+    - Boost spam : si correcteur prédit spam avec confiance > 0.5,
+      augmenter son poids pour compenser le biais RF contre spam
+    """
+    rf_proba = np.array([rf_proba_dict.get(c, 0.0) for c in class_names])
+
+    try:
+        # TF-IDF réduit
+        if X_tfidf.shape[1] > 500:
+            variances = np.asarray(X_tfidf.power(2).mean(axis=0)).flatten()
+            top500    = np.argsort(variances)[-500:]
+            X_small   = X_tfidf[:, top500]
+        else:
+            X_small = X_tfidf
+
+        # Features structurelles (20 valeurs)
+        X_struct = csr_matrix([list(struct_feats.values())])
+
+        # Features complètes du correcteur v2 : 3 (RF proba) + 500 (TF-IDF) + 20 (struct)
+        X_corr = hstack([csr_matrix([rf_proba]), X_small, X_struct])
+
+        if not hasattr(corrector, 'predict_proba'):
+            return rf_proba_dict
+
+        corr_proba = corrector.predict_proba(X_corr)[0]
+        corr_conf  = float(corr_proba.max())
+        corr_pred  = class_names[int(np.argmax(corr_proba))]
+
+        # Poids de base
+        w_corr = 0.4 * corr_conf
+
+        # Boost spam : si le correcteur détecte du spam avec certitude,
+        # augmenter son poids car RF sous-prédit systématiquement le spam
+        if corr_pred == 'spam' and corr_conf > 0.50:
+            w_corr = min(w_corr + 0.15, 0.55)
+            logger.debug(f"Spam boost activé (w_corr={w_corr:.2f})")
+
+        w_rf  = 1.0 - w_corr
+        final = w_rf * rf_proba + w_corr * corr_proba
+        final = final / final.sum()
+
+        return {c: float(p) for c, p in zip(class_names, final)}
+
+    except Exception as e:
+        logger.warning(f"Correcteur erreur : {e} — RF seul")
+        return rf_proba_dict
+
+
+# ══════════════════════════════════════════════════════════════════
+# DATACLASS RÉSULTAT (enrichi)
+# ══════════════════════════════════════════════════════════════════
+
+@dataclass
+class AnalysisResult:
+    predicted_class:   str   = 'ham'
+    threat_level:      str   = 'none'
+    global_confidence: float = 0.0
+    rule_score:        float = 0.0
+    header_score:      float = 0.0
+    ml_proba:          dict  = field(default_factory=dict)
+    rules_triggered:   list  = field(default_factory=list)
+    header_flags:      list  = field(default_factory=list)
+    url_flags:         list  = field(default_factory=list)
+    latency_ms:        float = 0.0
+    decision_path:     str   = ''
+    explanation:       str   = ''       # Nouveau v2
+    whitelisted:       bool  = False    # Nouveau v2
+    weights_used:      dict  = field(default_factory=dict)  # Nouveau v2
+    spam_category:     str   = ''       # Nouveau v2
+
+    def to_dict(self) -> dict:
+        return {
+            'predicted_class':   self.predicted_class,
+            'threat_level':      self.threat_level,
+            'global_confidence': round(self.global_confidence, 4),
+            'rule_score':        round(self.rule_score, 4),
+            'header_score':      round(self.header_score, 4),
+            'ml_proba':          {k: round(v, 4) for k, v in self.ml_proba.items()},
+            'rules_triggered':   self.rules_triggered,
+            'header_flags':      self.header_flags,
+            'url_flags':         self.url_flags,
+            'latency_ms':        round(self.latency_ms, 2),
+            'decision_path':     self.decision_path,
+            'explanation':       self.explanation,
+            'whitelisted':       self.whitelisted,
+            'weights_used':      {k: round(v, 3) for k, v in self.weights_used.items()},
+            'spam_category':     self.spam_category,
+        }
+
+
+# ══════════════════════════════════════════════════════════════════
+# PIPELINE HYBRIDE V2
+# ══════════════════════════════════════════════════════════════════
+
+class HybridEmailPipelineV2:
+    """
+    Pipeline hybride amélioré.
+
+    Architecture :
+        Couche 0 : Whitelist (bypass pour domaines légitimes connus)
+        Couche 1 : Règles heuristiques + SpamBooster (lexique étendu)
+        Couche 2 : Analyse headers SPF/DKIM/DMARC
+        Couche 3 : Random Forest (immuable) + Correcteur SGD enrichi
+        Agrégation : poids adaptatifs selon le contexte
+        Explication : langage naturel de la décision
+    """
+
+    def __init__(self):
+        self._ml_model      = None
+        self._tfidf         = None
+        self._label_encoder = None
+        self._class_names   = ['ham', 'phishing', 'spam']
+        self._corrector     = None
+
+        # Nouvelles couches v2
+        self._whitelist     = WhitelistEngine()
+        self._heuristic     = HeuristicLayer()
+        self._adapt_weights = AdaptiveWeights()
+        self._explainer     = ExplainEngine()
+
+    def load_models(self):
+        import warnings
+        warnings.filterwarnings("ignore", category=UserWarning)
+
+        self._tfidf         = joblib.load(DATA_DIR / 'tfidf_vectorizer.pkl')
+        self._ml_model      = joblib.load(DATA_DIR / 'best_model.pkl')
+        self._label_encoder = joblib.load(DATA_DIR / 'label_encoder.pkl')
+        self._class_names   = list(self._label_encoder.classes_)
+        self._corrector     = _load_corrector()
+
+        logger.info(f"Modèle base  : {type(self._ml_model).__name__}")
+        logger.info(f"Classes      : {self._class_names}")
+        logger.info(f"Correcteur   : {'actif' if self._corrector else 'inactif'}")
+        logger.info(f"Whitelist    : {len(self._whitelist.domains)} domaines")
+
+    def reload_corrector(self):
+        self._corrector = _load_corrector()
+        logger.info(f"Correcteur rechargé : {'actif' if self._corrector else 'inactif'}")
+
+    def _predict_ml(self, text: str):
+        """RF prediction — retourne (proba_dict, X_tfidf, struct_feats)."""
+        cleaned  = clean_text(text)
+        X_tfidf  = self._tfidf.transform([cleaned])
+        struct   = extract_structural_features(text)
+        X_struct = csr_matrix([list(struct.values())])
+        try:
+            X     = hstack([X_tfidf, X_struct])
+            proba = self._ml_model.predict_proba(X)[0]
+        except Exception:
+            proba = self._ml_model.predict_proba(X_tfidf)[0]
+        proba_dict = {c: float(p) for c, p in zip(self._class_names, proba)}
+        return proba_dict, X_tfidf, struct
+
+    def _aggregate(self, rule_spam: float, rule_phish: float,
+                   header_score: float, ml_proba: dict,
+                   weights: dict) -> Tuple[str, float, str]:
+        """Agrégation pondérée avec poids adaptatifs."""
+        rule_ham = max(0.0, 1.0 - rule_spam - rule_phish)
+        rule_vec = {'ham': rule_ham, 'spam': rule_spam, 'phishing': rule_phish}
+        head_vec = {
+            'ham':      max(0.0, 1.0 - header_score),
+            'spam':     header_score * 0.35,   # Légèrement augmenté vs v1 (0.4)
+            'phishing': header_score * 0.65,
+        }
+        final = {}
+        for c in self._class_names:
+            final[c] = (weights.get('rules', 0.20)   * rule_vec.get(c, 0) +
+                        weights.get('headers', 0.25)  * head_vec.get(c, 0) +
+                        weights.get('ml', 0.55)       * ml_proba.get(c, 0))
+
+        total = sum(final.values())
+        if total > 0:
+            final = {c: v / total for c, v in final.items()}
+
+        pred = max(final, key=final.get)
+        conf = final[pred]
+
+        # Niveau de menace
+        if pred == 'ham':
+            threat = 'none'
+        elif pred == 'phishing':
+            if conf >= 0.75: threat = 'critical'
+            elif conf >= 0.50: threat = 'high'
+            elif conf >= 0.30: threat = 'medium'
+            else: threat = 'low'
+        else:  # spam
+            if conf >= 0.80: threat = 'high'
+            elif conf >= 0.50: threat = 'medium'
+            else: threat = 'low'
+
+        return pred, conf, threat
+
+    def analyze(self, text: str, raw_email: str = '') -> AnalysisResult:
+        from time import time
+        t0     = time()
+        result = AnalysisResult()
+        path   = []
+
+        # ── Couche 0 : Whitelist ────────────────────────────────
+        sender_domain = ''
+        if raw_email:
+            try:
+                msg = email_lib.message_from_string(raw_email)
+                m = re.search(r'@([\w.-]+)', msg.get('From', ''))
+                if m: sender_domain = m.group(1).lower()
+            except Exception:
+                pass
+
+        whitelisted, wl_reason = self._whitelist.is_whitelisted(text, sender_domain)
+        if whitelisted:
+            result.whitelisted       = True
+            result.predicted_class   = 'ham'
+            result.threat_level      = 'none'
+            result.global_confidence = 0.95
+            result.latency_ms        = (time() - t0) * 1000
+            result.decision_path     = f'whitelist({wl_reason}) -> HAM'
+            result.explanation       = f"Domaine expéditeur reconnu comme légitime ({wl_reason})."
+            return result
+
+        # ── Couche 1 : Règles heuristiques + SpamBooster ───────
+        rule_spam, rule_phish, rules_hit, url_flags = self._heuristic.analyze(
+            text, is_whitelisted=False
+        )
+        result.rule_score      = max(rule_spam, rule_phish)
+        result.rules_triggered = rules_hit
+        result.url_flags       = url_flags
+        path.append(f'rules(s={rule_spam:.2f},p={rule_phish:.2f})')
+
+        # Early stop
+        if rule_phish >= 0.95:
+            result.predicted_class   = 'phishing'
+            result.global_confidence = rule_phish
+            result.threat_level      = 'critical'
+            result.latency_ms        = (time() - t0) * 1000
+            result.decision_path     = ' -> '.join(path) + ' -> EARLY_STOP_PHISHING'
+            result.explanation       = self._explainer.explain(
+                'phishing', rule_phish, rules_hit, [], url_flags)
+            return result
+
+        if rule_spam >= 0.92:   # Seuil légèrement abaissé vs v1 (0.95)
+            result.predicted_class   = 'spam'
+            result.global_confidence = rule_spam
+            result.threat_level      = 'high' if rule_spam >= 0.85 else 'medium'
+            result.latency_ms        = (time() - t0) * 1000
+            result.decision_path     = ' -> '.join(path) + ' -> EARLY_STOP_SPAM'
+            result.explanation       = self._explainer.explain(
+                'spam', rule_spam, rules_hit, [], url_flags)
+            # Catégorie spam dominante
+            for cat in ['financial', 'scam', 'pharma', 'marketing']:
+                if any(f'spam_{cat}' in r for r in rules_hit):
+                    result.spam_category = cat
+                    break
+            return result
+
+        # ── Couche 2 : Headers ──────────────────────────────────
+        if raw_email:
+            header_score, header_flags, _ = analyze_headers(raw_email)
+        else:
+            header_score, header_flags = 0.0, ['no_raw_email']
+        result.header_score = header_score
+        result.header_flags = header_flags
+        has_headers = bool(raw_email)
+        path.append(f'headers({header_score:.2f})')
+
+        # ── Couche 3 : RF + Correcteur SGD ─────────────────────
+        try:
+            ml_proba, X_tfidf, struct = self._predict_ml(text)
+        except Exception as e:
+            logger.warning(f"ML predict failed: {e}")
+            ml_proba  = {c: 1.0 / len(self._class_names) for c in self._class_names}
+            X_tfidf   = None
+            struct    = {}
+
+        ml_max_conf = max(ml_proba.values()) if ml_proba else 0.0
+
+        if self._corrector is not None and X_tfidf is not None:
+            ml_proba = _apply_corrector(
+                self._corrector, ml_proba, X_tfidf, struct, self._class_names
+            )
+            path.append(f'rf+sgd({max(ml_proba,key=ml_proba.get)})')
+        else:
+            path.append(f'rf({max(ml_proba,key=ml_proba.get)})')
+
+        result.ml_proba = ml_proba
+
+        # ── Poids adaptatifs ────────────────────────────────────
+        weights = self._adapt_weights.compute(
+            rule_spam, rule_phish, header_score,
+            has_headers=has_headers,
+            has_corrector=self._corrector is not None,
+            ml_max_conf=ml_max_conf,
+        )
+        result.weights_used = weights
+
+        # ── Agrégation ──────────────────────────────────────────
+        pred, conf, threat = self._aggregate(
+            rule_spam, rule_phish, header_score, ml_proba, weights
+        )
+        result.predicted_class   = pred
+        result.global_confidence = conf
+        result.threat_level      = threat
+        result.latency_ms        = (time() - t0) * 1000
+        result.decision_path     = ' -> '.join(path) + f' -> {pred.upper()}({conf:.2f})'
+        result.explanation       = self._explainer.explain(
+            pred, conf, rules_hit, header_flags, url_flags
+        )
+
+        # Catégorie spam si applicable
+        if pred == 'spam':
+            for cat in ['financial', 'scam', 'pharma', 'marketing']:
+                if any(f'spam_{cat}' in r for r in rules_hit):
+                    result.spam_category = cat
+                    break
+
+        return result
+
+
+# ══════════════════════════════════════════════════════════════════
+# LOADER (compatible avec main.py existant)
+# ══════════════════════════════════════════════════════════════════
+
+class PipelineLoader:
+    def __init__(self):
+        self._pipeline = HybridEmailPipelineV2()
+        self._loaded   = False
+
+    def load(self):
+        logger.info("Chargement du pipeline hybride v2...")
+        try:
+            self._pipeline.load_models()
+            self._loaded = True
+            logger.info("Pipeline v2 prêt.")
+        except FileNotFoundError as e:
+            logger.error(f"Modèle manquant : {e}")
+            raise
+
+    def reload_corrector(self):
+        self._pipeline.reload_corrector()
+
+    @property
+    def is_loaded(self): return self._loaded
+
+    def analyze(self, text: str, raw_email: Optional[str] = None) -> dict:
+        if not self._loaded:
+            raise RuntimeError("Pipeline non chargé.")
+        return self._pipeline.analyze(text, raw_email or '').to_dict()
+
+    def add_to_whitelist(self, domain: str):
+        """Ajouter un domaine à la whitelist depuis l'API."""
+        self._pipeline._whitelist.add_domain(domain)
+
+    def get_models_info(self) -> dict:
+        p = self._pipeline
+        return {
+            'version':     '2.0',
+            'pipeline':    'HybridEmailPipelineV2',
+            'ml_model':    type(p._ml_model).__name__ if p._ml_model else 'non chargé',
+            'corrector':   'actif' if p._corrector else 'inactif',
+            'whitelist':   len(p._whitelist.domains),
+            'bert':        False,
+            'class_names': p._class_names,
+        }
+
+
+pipeline_loader = PipelineLoader()

@@ -1,0 +1,75 @@
+{
+  "history": [
+    {
+      "predicted": "phishing",
+      "correct": "ham",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T13:00:24.666636"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "ham",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T13:00:44.814333"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "ham",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T13:00:51.793220"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "ham",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T13:00:58.295884"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "ham",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T13:01:02.995770"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "spam",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T13:01:20.252209"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "ham",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T13:01:29.744455"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "ham",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T17:12:13.563334"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "spam",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T17:12:22.031670"
+    },
+    {
+      "predicted": "phishing",
+      "correct": "ham",
+      "confidence": 0.0,
+      "correct_yn": 0,
+      "ts": "2026-06-10T17:12:28.043488"
+    }
+  ],
+  "updated_at": "2026-06-10T17:12:28.043951"
+}
