@@ -27,7 +27,7 @@ from datetime import datetime
 
 logger = logging.getLogger("spam_detector_v2")
 
-DATA_DIR       = Path(__file__).resolve().parent.parent / "data"  # notebooks/data/
+DATA_DIR       = Path(__file__).parent.parent / "data"
 CORRECTOR_PATH = DATA_DIR / "incremental_corrector.pkl"
 WHITELIST_PATH = DATA_DIR / "whitelist_domains.txt"
 STATS_PATH     = DATA_DIR / "pipeline_stats.json"
@@ -213,7 +213,7 @@ class WhitelistEngine:
 
     def _load_custom(self):
         if WHITELIST_PATH.exists():
-            with open(WHITELIST_PATH, encoding='utf-8') as f:
+            with open(WHITELIST_PATH) as f:
                 for line in f:
                     d = line.strip().lower()
                     if d and not d.startswith('#'):
@@ -238,7 +238,7 @@ class WhitelistEngine:
 
     def add_domain(self, domain: str):
         self.domains.add(domain.lower().strip())
-        with open(WHITELIST_PATH, 'a', encoding='utf-8') as f:
+        with open(WHITELIST_PATH, 'a') as f:
             f.write(f'{domain.lower().strip()}\n')
         logger.info(f'Whitelist: ajout de {domain}')
 
@@ -799,41 +799,21 @@ class HybridEmailPipelineV2:
         if total > 0:
             final = {c: v / total for c, v in final.items()}
 
-        # Seuils calibrés issus de l'évaluation réelle sur X_test (27 061 emails)
-        # Seuil défaut 0.50 : précision phishing=40%, F1-Macro=0.7357
-        # Seuil optimal     : précision phishing=93.9%, F1-Macro=0.9018 (+0.166)
-        # phishing >= 0.90, spam >= 0.60
-        THRESH_PHISHING = 0.90
-        THRESH_SPAM     = 0.60
-
-        p_phish = final.get('phishing', 0.0)
-        p_spam  = final.get('spam', 0.0)
-        p_ham   = final.get('ham', 0.0)
-
-        logger.debug(
-            f"[Aggregation] final={ {k: round(v,4) for k,v in final.items()} } "
-            f"weights={ {k: round(v,3) for k,v in weights.items()} } "
-            f"thresholds=(phish>={THRESH_PHISHING}, spam>={THRESH_SPAM})"
-        )
-
-        if p_phish >= THRESH_PHISHING:
-            pred, conf = 'phishing', p_phish
-        elif p_spam >= THRESH_SPAM:
-            pred, conf = 'spam', p_spam
-        else:
-            pred, conf = 'ham', p_ham
+        pred = max(final, key=final.get)
+        conf = final[pred]
 
         # Niveau de menace
         if pred == 'ham':
             threat = 'none'
         elif pred == 'phishing':
-            if conf >= 0.95:   threat = 'critical'
-            elif conf >= 0.90: threat = 'high'
-            else:              threat = 'medium'
-        else:
-            if conf >= 0.80:   threat = 'high'
-            elif conf >= 0.60: threat = 'medium'
-            else:              threat = 'low'
+            if conf >= 0.75: threat = 'critical'
+            elif conf >= 0.50: threat = 'high'
+            elif conf >= 0.30: threat = 'medium'
+            else: threat = 'low'
+        else:  # spam
+            if conf >= 0.80: threat = 'high'
+            elif conf >= 0.50: threat = 'medium'
+            else: threat = 'low'
 
         return pred, conf, threat
 
