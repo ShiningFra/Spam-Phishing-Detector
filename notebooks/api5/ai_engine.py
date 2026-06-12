@@ -517,7 +517,7 @@ class SelfEvaluator:
                         if corrector_path.exists() else 0,
         }
         if update_history.exists():
-            with open(update_history, encoding="utf-8") as f:
+            with open(update_history) as f:
                 history = json.load(f)
             if history:
                 last = history[-1]
@@ -534,7 +534,7 @@ class SelfEvaluator:
         report["recommendations"] = recs
 
         # Sauvegarder
-        with open(HEALTH_FILE, "w", encoding="utf-8") as f:
+        with open(HEALTH_FILE, "w") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
 
         return report
@@ -542,7 +542,7 @@ class SelfEvaluator:
     def _count_lines(self, path: Path) -> int:
         if not path.exists():
             return 0
-        with open(path, encoding="utf-8") as f:
+        with open(path) as f:
             return sum(1 for line in f if line.strip())
 
     def _eval_on_applied_corrections(self) -> dict:
@@ -553,7 +553,7 @@ class SelfEvaluator:
         """
         applied_file = LOGS_DIR / "feedback_applied.jsonl"
         corrections  = []
-        with open(applied_file, encoding="utf-8") as f:
+        with open(applied_file) as f:
             for line in f:
                 try:
                     e = json.loads(line.strip())

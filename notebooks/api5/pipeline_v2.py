@@ -213,7 +213,7 @@ class WhitelistEngine:
 
     def _load_custom(self):
         if WHITELIST_PATH.exists():
-            with open(WHITELIST_PATH, encoding='utf-8') as f:
+            with open(WHITELIST_PATH) as f:
                 for line in f:
                     d = line.strip().lower()
                     if d and not d.startswith('#'):
@@ -238,7 +238,7 @@ class WhitelistEngine:
 
     def add_domain(self, domain: str):
         self.domains.add(domain.lower().strip())
-        with open(WHITELIST_PATH, 'a', encoding='utf-8') as f:
+        with open(WHITELIST_PATH, 'a') as f:
             f.write(f'{domain.lower().strip()}\n')
         logger.info(f'Whitelist: ajout de {domain}')
 
@@ -809,12 +809,6 @@ class HybridEmailPipelineV2:
         p_phish = final.get('phishing', 0.0)
         p_spam  = final.get('spam', 0.0)
         p_ham   = final.get('ham', 0.0)
-
-        logger.debug(
-            f"[Aggregation] final={ {k: round(v,4) for k,v in final.items()} } "
-            f"weights={ {k: round(v,3) for k,v in weights.items()} } "
-            f"thresholds=(phish>={THRESH_PHISHING}, spam>={THRESH_SPAM})"
-        )
 
         if p_phish >= THRESH_PHISHING:
             pred, conf = 'phishing', p_phish

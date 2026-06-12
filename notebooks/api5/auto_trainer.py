@@ -56,7 +56,7 @@ class PerformanceTracker:
     def _load(self):
         if PERF_FILE.exists():
             try:
-                with open(PERF_FILE, encoding='utf-8') as f:
+                with open(PERF_FILE) as f:
                     data = json.load(f)
                 for entry in data.get('history', [])[-self.WINDOW:]:
                     self.history.append(entry)
@@ -64,7 +64,7 @@ class PerformanceTracker:
                 pass
 
     def save(self):
-        with open(PERF_FILE, 'w', encoding='utf-8') as f:
+        with open(PERF_FILE, 'w') as f:
             json.dump({'history': list(self.history),
                        'updated_at': datetime.now().isoformat()}, f, indent=2)
 
@@ -277,7 +277,7 @@ class SmartScheduler:
         state_file = DATA_DIR / "scheduler_state.json"
         if state_file.exists():
             try:
-                with open(state_file, encoding='utf-8') as f:
+                with open(state_file) as f:
                     state = json.load(f)
                 lu = state.get('last_update')
                 if lu:
@@ -288,7 +288,7 @@ class SmartScheduler:
 
     def _save_state(self):
         state_file = DATA_DIR / "scheduler_state.json"
-        with open(state_file, 'w', encoding='utf-8') as f:
+        with open(state_file, 'w') as f:
             json.dump({
                 'last_update':  self._last_update.isoformat() if self._last_update else None,
                 'update_count': self._update_count,
