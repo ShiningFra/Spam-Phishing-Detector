@@ -1,4 +1,4 @@
-// ShieldMail v2 — Service Worker
+// ShieldMail v2 — Service Worker (corrigé)
 // Gere les appels aux APIs externes (AbuseIPDB, VirusTotal)
 // depuis le service worker pour eviter les problemes CORS
 
@@ -53,7 +53,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'ANALYSIS_DONE') {
-    // Broadcast pour la popup
     chrome.runtime.sendMessage(msg).catch(() => {});
     return false;
   }
@@ -100,12 +99,10 @@ async function checkIp(ip, apiKey) {
     isp:              data.isp                   || '',
     usageType:        data.usageType             || '',
     isWhitelisted:    data.isWhitelisted          || false,
-    // Classification
     threatLevel: scoreThreatLevel(data.abuseConfidenceScore || 0),
   };
 
   ipCache.set(ip, result);
-  // Cache TTL 10 min
   setTimeout(() => ipCache.delete(ip), 10 * 60 * 1000);
   return result;
 }
@@ -160,18 +157,28 @@ function scoreThreatLevel(score) {
 }
 
 // ── Sauvegarde dans le storage ────────────────────────────────────
+// Correction : le content script transmet `ip_reputations` et
+// `domain_reputations` (listes, pluriel) — l'ancienne version lisait
+// `ip_reputation` / `domain_reputation` (singulier, jamais peuplés).
+// On prend systématiquement le pire score de chaque liste.
 function saveResult(result, preview) {
   chrome.storage.local.get(['stats','recents'], d => {
     const stats   = d.stats   || { ham:0, spam:0, phishing:0 };
     const recents = d.recents || [];
     const cls     = result.predicted_class || 'ham';
     stats[cls] = (stats[cls] || 0) + 1;
+
+    const worstIp = (result.ip_reputations||[])
+      .reduce((max,ip)=> (ip.abuseScore||0) > (max?.abuseScore||0) ? ip : max, null);
+    const worstDom = (result.domain_reputations||[])
+      .reduce((max,d)=> (d.malicious||0) > (max?.malicious||0) ? d : max, null);
+
     recents.unshift({
       cls,
       conf:    ((result.global_confidence || 0) * 100).toFixed(0),
       preview: (preview || '').slice(0, 55),
-      ip_score: result.ip_reputation?.abuseScore || null,
-      vt_hits:  result.domain_reputation?.malicious || null,
+      ip_score: worstIp?.abuseScore ?? null,
+      vt_hits:  worstDom?.malicious ?? null,
       time:    new Date().toLocaleTimeString('fr-FR'),
     });
     if (recents.length > 20) recents.pop();
