@@ -1,18 +1,16 @@
-/* ShieldMail v2 — Styles injectés (corrigé) */
+/* ShieldMail v2 — Styles injectés */
 #sm-panel {
   position:fixed; top:70px; right:16px; width:330px;
   background:#0D1520; border:1px solid #1E3048; border-radius:12px;
   box-shadow:0 24px 64px rgba(0,0,0,.6); z-index:9999;
   font-family:'DM Sans',-apple-system,sans-serif; font-size:13px;
   transition:all .3s cubic-bezier(.34,1.56,.64,1); transform-origin:top right;
-  max-height:85vh; overflow-y:auto;
 }
 #sm-panel.sm-hidden  { opacity:0; transform:scale(.9) translateY(-10px); pointer-events:none; }
 #sm-panel.sm-visible { opacity:1; transform:scale(1) translateY(0); }
 
 .sm-header { background:#111D2E; border-bottom:1px solid #1E3048; padding:10px 14px;
-  display:flex; align-items:center; gap:8px; border-radius:12px 12px 0 0;
-  position:sticky; top:0; z-index:1; }
+  display:flex; align-items:center; gap:8px; border-radius:12px 12px 0 0; }
 .sm-dot { width:7px; height:7px; background:#00D4B4; border-radius:50%;
   box-shadow:0 0 8px #00D4B4; animation:smpulse 2s infinite; flex-shrink:0; }
 .sm-title { font-size:13px; font-weight:700; color:#F0F4F8; flex:1; }
@@ -36,12 +34,6 @@
 .sm-conf-wrap { margin-left:auto; text-align:right; }
 .sm-conf-num  { font-size:20px; font-weight:800; color:#F0F4F8; line-height:1; }
 .sm-conf-lbl  { font-size:9px; color:#5C7A96; text-transform:uppercase; letter-spacing:.05em; }
-
-/* Explication en langage naturel (champ `explanation` du pipeline) */
-.sm-explain {
-  padding:10px 14px; font-size:11px; line-height:1.5; color:#C3D5E5;
-  background:rgba(92,122,150,.06); border-bottom:1px solid rgba(30,48,72,.6);
-}
 
 .sm-section { padding:10px 14px; border-bottom:1px solid rgba(30,48,72,.6); }
 .sm-section:last-child { border:none; }
@@ -75,8 +67,7 @@
 
 /* Footer */
 .sm-footer { padding:8px 14px; display:flex; align-items:center;
-  justify-content:space-between; border-top:1px solid #1E3048;
-  position:sticky; bottom:0; background:#0D1520; border-radius:0 0 12px 12px; }
+  justify-content:space-between; border-top:1px solid #1E3048; }
 .sm-lat    { display:flex; align-items:center; gap:4px; font-family:monospace; font-size:9px; color:#5C7A96; }
 .sm-latdot { width:5px; height:5px; background:#00D4B4; border-radius:50%; }
 .sm-reanalyze { background:none; border:none; color:#00D4B4;

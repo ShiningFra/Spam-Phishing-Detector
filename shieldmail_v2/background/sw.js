@@ -1,20 +1,29 @@
-// ShieldMail v2 — Service Worker (corrigé)
+// ShieldMail v2 — Service Worker
 // Gere les appels aux APIs externes (AbuseIPDB, VirusTotal)
 // depuis le service worker pour eviter les problemes CORS
 
 'use strict';
 
 // ── Init ──────────────────────────────────────────────────────────
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({
-    apiUrl:        'http://localhost:8000',
-    abuseipdbKey:  '',
-    virustotalKey: '',
-    autoAnalyze:   true,
-    showBadges:    true,
-    showAlert:     true,
-    stats:  { ham: 0, spam: 0, phishing: 0 },
-    recents: [],
+chrome.runtime.onInstalled.addListener(details => {
+  chrome.storage.local.get(['setupComplete'], d => {
+    // Ne réinitialise jamais une configuration déjà présente (ex. mise à jour de l'extension)
+    chrome.storage.local.set({
+      apiUrl:        d.apiUrl        ?? 'http://localhost:8000',
+      abuseipdbKey:  d.abuseipdbKey  ?? '',
+      virustotalKey: d.virustotalKey ?? '',
+      setupComplete: d.setupComplete ?? false,
+      autoAnalyze:   d.autoAnalyze   ?? true,
+      showBadges:    d.showBadges    ?? true,
+      showAlert:     d.showAlert     ?? true,
+      stats:         d.stats         ?? { ham: 0, spam: 0, phishing: 0 },
+      recents:       d.recents       ?? [],
+    });
+
+    // Config initiale définitive : demandée une seule fois, à la première installation
+    if (details.reason === 'install' && !d.setupComplete) {
+      chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html?first=1') });
+    }
   });
 });
 
@@ -48,12 +57,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'SAVE_RESULT') {
     saveResult(msg.result, msg.preview);
+    // Notifie le popup (s'il est ouvert) pour rafraîchir stats + historique en direct
+    chrome.runtime.sendMessage({ type: 'ANALYSIS_DONE' }).catch(() => {});
     sendResponse({ ok: true });
-    return false;
-  }
-
-  if (msg.type === 'ANALYSIS_DONE') {
-    chrome.runtime.sendMessage(msg).catch(() => {});
     return false;
   }
 });
@@ -99,10 +105,12 @@ async function checkIp(ip, apiKey) {
     isp:              data.isp                   || '',
     usageType:        data.usageType             || '',
     isWhitelisted:    data.isWhitelisted          || false,
+    // Classification
     threatLevel: scoreThreatLevel(data.abuseConfidenceScore || 0),
   };
 
   ipCache.set(ip, result);
+  // Cache TTL 10 min
   setTimeout(() => ipCache.delete(ip), 10 * 60 * 1000);
   return result;
 }
@@ -157,28 +165,18 @@ function scoreThreatLevel(score) {
 }
 
 // ── Sauvegarde dans le storage ────────────────────────────────────
-// Correction : le content script transmet `ip_reputations` et
-// `domain_reputations` (listes, pluriel) — l'ancienne version lisait
-// `ip_reputation` / `domain_reputation` (singulier, jamais peuplés).
-// On prend systématiquement le pire score de chaque liste.
 function saveResult(result, preview) {
   chrome.storage.local.get(['stats','recents'], d => {
     const stats   = d.stats   || { ham:0, spam:0, phishing:0 };
     const recents = d.recents || [];
     const cls     = result.predicted_class || 'ham';
     stats[cls] = (stats[cls] || 0) + 1;
-
-    const worstIp = (result.ip_reputations||[])
-      .reduce((max,ip)=> (ip.abuseScore||0) > (max?.abuseScore||0) ? ip : max, null);
-    const worstDom = (result.domain_reputations||[])
-      .reduce((max,d)=> (d.malicious||0) > (max?.malicious||0) ? d : max, null);
-
     recents.unshift({
       cls,
       conf:    ((result.global_confidence || 0) * 100).toFixed(0),
       preview: (preview || '').slice(0, 55),
-      ip_score: worstIp?.abuseScore ?? null,
-      vt_hits:  worstDom?.malicious ?? null,
+      ip_score: result.ip_reputation?.abuseScore || null,
+      vt_hits:  result.domain_reputation?.malicious || null,
       time:    new Date().toLocaleTimeString('fr-FR'),
     });
     if (recents.length > 20) recents.pop();
