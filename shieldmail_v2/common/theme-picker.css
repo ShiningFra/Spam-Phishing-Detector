@@ -1,0 +1,20 @@
+/* ShieldMail v2 — Sélecteur de thème/police partagé */
+.sm-tp-row { display:grid; grid-template-columns:repeat(2,1fr); gap:6px; margin-bottom:8px; }
+.sm-tp-swatch {
+  display:flex; align-items:center; gap:6px; padding:7px 8px; border-radius:7px;
+  background:var(--sm-bg3,#111D2E); border:1px solid var(--sm-border,#1E3048); cursor:pointer;
+  color:var(--sm-text-mid,#8AAFC8); font-size:10.5px; font-family:var(--sm-font-main,sans-serif);
+  transition:border-color .15s,background .15s;
+}
+.sm-tp-swatch:hover { border-color:var(--sm-accent,#00D4B4); }
+.sm-tp-swatch.active { border-color:var(--sm-accent,#00D4B4); background:rgba(var(--sm-accent-rgb,0,212,180),.08); color:var(--sm-text,#F0F4F8); }
+.sm-tp-dots { display:flex; gap:2px; flex-shrink:0; }
+.sm-tp-dots i { width:9px; height:9px; border-radius:50%; display:block; box-shadow:0 0 0 1px rgba(0,0,0,.25) inset; }
+.sm-tp-fonts { display:flex; flex-direction:column; gap:6px; }
+.sm-tp-font {
+  text-align:left; padding:7px 10px; border-radius:7px; background:var(--sm-bg3,#111D2E);
+  border:1px solid var(--sm-border,#1E3048); cursor:pointer; color:var(--sm-text-mid,#8AAFC8); font-size:12px;
+  transition:border-color .15s,background .15s;
+}
+.sm-tp-font:hover { border-color:var(--sm-accent,#00D4B4); }
+.sm-tp-font.active { border-color:var(--sm-accent,#00D4B4); background:rgba(var(--sm-accent-rgb,0,212,180),.08); color:var(--sm-text,#F0F4F8); }

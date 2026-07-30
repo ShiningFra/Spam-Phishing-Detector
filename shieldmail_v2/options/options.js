@@ -11,11 +11,35 @@ const $closeBtn       = document.getElementById('close-btn');
 const $status         = document.getElementById('status');
 const $note           = document.getElementById('note');
 
+let currentTheme = SM_DEFAULT_THEME, currentFont = SM_DEFAULT_FONT, currentDetail = 'full';
+
+function setDetailLevel(level) {
+  currentDetail = level;
+  document.querySelectorAll('#detail-seg button').forEach(b => b.classList.toggle('active', b.dataset.v === level));
+}
+
 // ── Chargement des valeurs existantes (utile pour une modification ultérieure) ──
-chrome.storage.local.get(['apiUrl', 'abuseipdbKey', 'virustotalKey'], d => {
-  $apiUrl.value        = d.apiUrl || 'http://localhost:8000';
-  $abuseipdbKey.value   = d.abuseipdbKey  || '';
-  $virustotalKey.value  = d.virustotalKey || '';
+chrome.storage.local.get(
+  ['apiUrl', 'abuseipdbKey', 'virustotalKey', 'theme', 'font', 'detailLevel'],
+  d => {
+    $apiUrl.value        = d.apiUrl || 'http://localhost:8000';
+    $abuseipdbKey.value   = d.abuseipdbKey  || '';
+    $virustotalKey.value  = d.virustotalKey || '';
+    currentTheme = d.theme || SM_DEFAULT_THEME;
+    currentFont  = d.font  || SM_DEFAULT_FONT;
+    smApplyTheme(document.documentElement, currentTheme, currentFont);
+    setDetailLevel(d.detailLevel || 'full');
+    smBuildThemePicker(document.getElementById('theme-picker'), { theme: currentTheme, font: currentFont }, (theme, font) => {
+      currentTheme = theme; currentFont = font;
+      smApplyTheme(document.documentElement, theme, font);
+    });
+  }
+);
+
+document.getElementById('detail-seg').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-v]');
+  if (!btn) return;
+  setDetailLevel(btn.dataset.v);
 });
 
 if (isFirstRun) {
@@ -29,12 +53,17 @@ $saveBtn.addEventListener('click', () => {
   $saveBtn.disabled = true;
   $saveBtn.textContent = 'Enregistrement...';
 
-  chrome.storage.local.set({
+  const settings = {
     apiUrl,
     abuseipdbKey:  $abuseipdbKey.value.trim(),
     virustotalKey: $virustotalKey.value.trim(),
+    theme: currentTheme,
+    font: currentFont,
+    detailLevel: currentDetail,
     setupComplete: true,
-  }, () => {
+  };
+
+  chrome.storage.local.set(settings, () => {
     $status.classList.add('show', 'ok');
     $status.textContent = '✓ Configuration enregistrée';
     $saveBtn.textContent = 'Enregistrer la configuration';
@@ -46,7 +75,7 @@ $saveBtn.addEventListener('click', () => {
       tabs => tabs.forEach(t =>
         chrome.tabs.sendMessage(t.id, {
           type: 'SETTINGS_CHANGED',
-          settings: { apiUrl },
+          settings: { apiUrl, theme: currentTheme, font: currentFont, detailLevel: currentDetail },
         }).catch(() => {})
       )
     );

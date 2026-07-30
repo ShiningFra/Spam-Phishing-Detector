@@ -24,19 +24,36 @@ function renderConfigStatus(d) {
   }
 }
 
+function renderStats(s) {
+  const st = s || { ham: 0, spam: 0, phishing: 0, corrections: 0 };
+  document.getElementById('sham').textContent   = st.ham || 0;
+  document.getElementById('sspam').textContent  = st.spam || 0;
+  document.getElementById('sphish').textContent = st.phishing || 0;
+  document.getElementById('scorr').textContent  = st.corrections || 0;
+}
+
+function setDetailLevel(level) {
+  document.querySelectorAll('#detail-seg button').forEach(b => b.classList.toggle('active', b.dataset.v === level));
+}
+
 // ── Chargement initial ────────────────────────────────────────────
 chrome.storage.local.get(
-  ['apiUrl', 'abuseipdbKey', 'virustotalKey', 'setupComplete', 'autoAnalyze', 'showBadges', 'showAlert', 'stats', 'recents'],
+  ['apiUrl', 'abuseipdbKey', 'virustotalKey', 'setupComplete', 'autoAnalyze', 'showBadges', 'showAlert',
+   'stats', 'recents', 'theme', 'font', 'detailLevel'],
   d => {
+    smApplyTheme(document.documentElement, d.theme || SM_DEFAULT_THEME, d.font || SM_DEFAULT_FONT);
     if (d.autoAnalyze !== undefined) document.getElementById('autoAnalyze').checked = d.autoAnalyze;
     if (d.showBadges  !== undefined) document.getElementById('showBadges').checked  = d.showBadges;
     if (d.showAlert   !== undefined) document.getElementById('showAlert').checked   = d.showAlert;
-    const s = d.stats || { ham: 0, spam: 0, phishing: 0 };
-    document.getElementById('sham').textContent   = s.ham;
-    document.getElementById('sspam').textContent  = s.spam;
-    document.getElementById('sphish').textContent = s.phishing;
+    renderStats(d.stats);
     renderRecents(d.recents || []);
     renderConfigStatus(d);
+    setDetailLevel(d.detailLevel || 'full');
+    smBuildThemePicker(document.getElementById('theme-picker'), { theme: d.theme, font: d.font }, (theme, font) => {
+      chrome.storage.local.set({ theme, font });
+      smApplyTheme(document.documentElement, theme, font);
+      broadcastToMailTabs({ theme, font });
+    });
     checkApi();
   }
 );
@@ -49,6 +66,21 @@ chrome.storage.local.get(
     chrome.storage.local.set({ [id]: e.target.checked });
     broadcastToMailTabs({ [id]: e.target.checked });
   });
+});
+
+// ── Niveau de détail ────────────────────────────────────────────────
+document.getElementById('detail-seg').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-v]');
+  if (!btn) return;
+  const detailLevel = btn.dataset.v;
+  setDetailLevel(detailLevel);
+  chrome.storage.local.set({ detailLevel });
+  broadcastToMailTabs({ detailLevel });
+});
+
+// ── Dashboard ─────────────────────────────────────────────────────
+document.getElementById('dash-btn').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
 });
 
 // ── Configuration (clés API + URL) — gérée sur une page dédiée ─────
@@ -84,6 +116,10 @@ function renderRecents(recents) {
   }
   c.innerHTML = recents.slice(0, 6).map(r => {
     let meta = '';
+    if (r.composite != null) {
+      const cls = r.composite >= 60 ? 'ip-bad' : r.composite >= 35 ? 'ip-warn' : 'ip-ok';
+      meta += `<span class="ri-meta ${cls}"> · fusion:${r.composite}</span>`;
+    }
     if (r.ip_score != null) {
       const cls = r.ip_score >= 75 ? 'ip-bad' : r.ip_score >= 15 ? 'ip-warn' : 'ip-ok';
       meta += `<span class="ri-meta ${cls}"> · IP:${r.ip_score}%</span>`;
@@ -107,10 +143,7 @@ function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 chrome.runtime.onMessage.addListener(msg => {
   if (msg.type === 'ANALYSIS_DONE') {
     chrome.storage.local.get(['stats', 'recents'], d => {
-      const s = d.stats || { ham: 0, spam: 0, phishing: 0 };
-      document.getElementById('sham').textContent   = s.ham;
-      document.getElementById('sspam').textContent  = s.spam;
-      document.getElementById('sphish').textContent = s.phishing;
+      renderStats(d.stats);
       renderRecents(d.recents || []);
     });
   }
