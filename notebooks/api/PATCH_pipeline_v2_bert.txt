@@ -1,0 +1,216 @@
+PATCH — pipeline_v2.py
+=======================
+Deux changements indépendants, à appliquer l'un après l'autre.
+Sauvegarde ton fichier actuel avant de commencer :
+    cp notebooks/api/pipeline_v2.py notebooks/api/pipeline_v2.py.bak
+
+
+────────────────────────────────────────────────────────────────────
+CHANGEMENT 1 — Réintégrer DistilBERT
+────────────────────────────────────────────────────────────────────
+
+1a. Ajouter en tête de fichier (après les imports existants) :
+
+    import torch
+    from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
+
+    BERT_MODEL_DIR = DATA_DIR / "distilbert_model"
+    BERT_MAX_LENGTH = 256          # aligné sur notebook_04 (MAX_LENGTH)
+    BERT_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+1b. Dans AdaptiveWeights, remplacer BASE pour réintroduire un poids bert
+    (même logique que le pipeline v1, weights = rules 0.20 / headers 0.25
+    / ml 0.35 / bert 0.20 — ici on répartit ml/bert à partir du même total
+    ml=0.55 de v2 pour ne pas bouleverser l'équilibre déjà calibré) :
+
+    Avant :
+        BASE = {'rules': 0.20, 'headers': 0.25, 'ml': 0.55}
+
+    Après :
+        BASE = {'rules': 0.20, 'headers': 0.25, 'ml': 0.35, 'bert': 0.20}
+
+    Et dans compute(), partout où le code fait
+        w['ml'] += w['headers'] * 0.6
+    remplacer par une redistribution qui inclut aussi bert au prorata :
+        extra = w['headers'] * 0.6
+        w['ml']   += extra * (0.35 / (0.35 + 0.20))
+        w['bert'] += extra * (0.20 / (0.35 + 0.20))
+    (Même logique pour les deux autres redistributions de compute() qui
+    déplacent du poids vers 'ml' — répartir proportionnellement entre
+    'ml' et 'bert' plutôt que tout donner à 'ml' seul.)
+
+
+1c. Ajouter une méthode de chargement et de prédiction BERT dans
+    HybridEmailPipelineV2, juste après _predict_ml :
+
+    def load_bert(self):
+        """Charge DistilBERT si le dossier du modèle existe. Optionnel :
+        le pipeline continue de fonctionner sans BERT si absent (comme
+        avant), simplement avec un poids bert nul redistribué vers ml."""
+        if not BERT_MODEL_DIR.exists():
+            logger.warning(f"DistilBERT introuvable dans {BERT_MODEL_DIR} — "
+                            "pipeline exécuté sans couche BERT.")
+            self._bert_tokenizer = None
+            self._bert_model = None
+            return
+        logger.info("Chargement de DistilBERT...")
+        self._bert_tokenizer = DistilBertTokenizerFast.from_pretrained(str(BERT_MODEL_DIR))
+        self._bert_model = DistilBertForSequenceClassification.from_pretrained(
+            str(BERT_MODEL_DIR), num_labels=len(self._class_names)
+        ).to(BERT_DEVICE)
+        self._bert_model.eval()
+        logger.info(f"DistilBERT chargé sur {BERT_DEVICE}.")
+
+    @torch.no_grad()
+    def _predict_bert(self, text: str) -> dict:
+        if self._bert_model is None:
+            return {}
+        encoding = self._bert_tokenizer(
+            text[:2000], max_length=BERT_MAX_LENGTH,
+            padding='max_length', truncation=True, return_tensors='pt',
+        )
+        outputs = self._bert_model(
+            input_ids=encoding['input_ids'].to(BERT_DEVICE),
+            attention_mask=encoding['attention_mask'].to(BERT_DEVICE),
+        )
+        probs = torch.softmax(outputs.logits, dim=-1).cpu().numpy()[0]
+        # IMPORTANT : mapper par NOM de classe, pas par index — l'ordre
+        # interne de DistilBertForSequenceClassification (id2label) doit
+        # être recoupé avec self._class_names (celui du label_encoder du
+        # RF), qui peuvent différer selon l'ordre d'entraînement.
+        id2label = self._bert_model.config.id2label
+        bert_proba_by_name = {id2label[i]: float(p) for i, p in enumerate(probs)}
+        return {c: bert_proba_by_name.get(c, 0.0) for c in self._class_names}
+
+
+1d. Dans __init__, ajouter :
+        self._bert_tokenizer = None
+        self._bert_model = None
+
+    Dans load_models(), ajouter à la fin (avant les logger.info de résumé) :
+        self.load_bert()
+
+1e. Dans analyze(), juste après le bloc "Couche 3 : RF + Correcteur SGD"
+    (après le `path.append(f'rf(...)` / `rf+sgd(...)`) et AVANT le calcul
+    des poids adaptatifs, ajouter :
+
+    # ── Couche 3b : DistilBERT (optionnelle) ───────────────
+    bert_proba = {}
+    if self._bert_model is not None:
+        bert_proba = self._predict_bert(text)
+        path.append(f'bert({max(bert_proba, key=bert_proba.get)})')
+
+    Puis dans l'appel à self._adapt_weights.compute(...), ajouter le
+    paramètre bert_available=bool(bert_proba) si tu veux moduler le poids
+    quand BERT est indisponible pour un email donné (sinon le poids bert
+    fixe de 0.20 sera simplement multiplié par un ml_proba vide → 0 dans
+    l'agrégation, ce qui reste correct mais un peu suboptimal).
+
+1f. Dans _aggregate(), ajouter bert_proba comme paramètre et l'inclure
+    dans le calcul de `final` :
+
+    Avant :
+        def _aggregate(self, rule_spam, rule_phish, header_score, ml_proba, weights):
+            ...
+            for c in self._class_names:
+                final[c] = (weights.get('rules', 0.20) * rule_vec.get(c, 0) +
+                            weights.get('headers', 0.25) * head_vec.get(c, 0) +
+                            weights.get('ml', 0.55) * ml_proba.get(c, 0))
+
+    Après :
+        def _aggregate(self, rule_spam, rule_phish, header_score, ml_proba,
+                        bert_proba, weights):
+            ...
+            for c in self._class_names:
+                final[c] = (weights.get('rules', 0.20) * rule_vec.get(c, 0) +
+                            weights.get('headers', 0.25) * head_vec.get(c, 0) +
+                            weights.get('ml', 0.35) * ml_proba.get(c, 0) +
+                            weights.get('bert', 0.20) * bert_proba.get(c, ml_proba.get(c, 0)))
+
+    (Le fallback `bert_proba.get(c, ml_proba.get(c, 0))` fait que si BERT
+    n'a pas tourné, on retombe sur ml_proba pour ce terme — comportement
+    identique à l'ancien pipeline v1.)
+
+    Et mettre à jour l'appel à _aggregate() dans analyze() en conséquence :
+        pred, conf, threat = self._aggregate(
+            rule_spam, rule_phish, header_score, ml_proba, bert_proba, weights
+        )
+
+    Le calcul de composite_phish qui utilise déjà ml_phish peut rester tel
+    quel, ou être enrichi symétriquement avec bert_proba — à ta discrétion
+    selon les résultats observés après le changement 2 ci-dessous.
+
+
+────────────────────────────────────────────────────────────────────
+CHANGEMENT 2 — Protéger le signal RF/BERT fort contre un correcteur
+                mal calibré
+────────────────────────────────────────────────────────────────────
+
+Dans _apply_corrector(), le poids du correcteur (w_corr) peut aujourd'hui
+diluer une prédiction RF déjà confiante sur la classe phishing — c'est la
+cause directe du F1-Macro à 0,62 observé. On ajoute une garde : si le RF
+est déjà très confiant sur 'phishing', on réduit fortement l'influence du
+correcteur pour cette prédiction précise, quelle que soit sa propre
+confiance.
+
+Avant (fin de _apply_corrector) :
+
+    # Poids de base
+    w_corr = 0.4 * corr_conf
+
+    # Boost spam : si le correcteur détecte du spam avec certitude,
+    # augmenter son poids car RF sous-prédit structurellement cette classe
+    if corr_pred == 'spam' and corr_conf > 0.50:
+        w_corr = min(w_corr + 0.15, 0.55)
+        logger.debug(f"Spam boost activé (w_corr={w_corr:.2f})")
+
+    w_rf = 1.0 - w_corr
+    final = w_rf * rf_proba + w_corr * corr_proba
+    final = final / final.sum()
+
+    return {c: float(p) for c, p in zip(class_names, final)}
+
+Après (remplace ce bloc) :
+
+    # Poids de base
+    w_corr = 0.4 * corr_conf
+
+    # Boost spam : si le correcteur détecte du spam avec certitude,
+    # augmenter son poids car RF sous-prédit structurellement cette classe
+    if corr_pred == 'spam' and corr_conf > 0.50:
+        w_corr = min(w_corr + 0.15, 0.55)
+        logger.debug(f"Spam boost activé (w_corr={w_corr:.2f})")
+
+    # Garde de protection : si le RF est déjà très confiant sur phishing,
+    # le correcteur ne doit pas pouvoir écraser ce signal — tant que le
+    # correcteur n'a pas reçu un volume suffisant de vraies corrections
+    # phishing équilibrées (cf. generate_balanced_corrections.py), son
+    # jugement sur cette classe reste structurellement moins fiable que
+    # celui du RF seul.
+    rf_phish_idx = class_names.index('phishing') if 'phishing' in class_names else None
+    if rf_phish_idx is not None and rf_proba[rf_phish_idx] > 0.70:
+        w_corr = min(w_corr, 0.15)
+        logger.debug(f"Protection RF phishing activée (w_corr plafonné à {w_corr:.2f})")
+
+    w_rf = 1.0 - w_corr
+    final = w_rf * rf_proba + w_corr * corr_proba
+    final = final / final.sum()
+
+    return {c: float(p) for c, p in zip(class_names, final)}
+
+
+────────────────────────────────────────────────────────────────────
+Après application des deux changements
+────────────────────────────────────────────────────────────────────
+
+1. Vérifier que le dossier notebooks/data/distilbert_model existe
+   (sinon télécharger/copier celui produit par le notebook 04).
+2. Relancer script_ablation_locale.py tel quel — HybridEmailPipelineV2
+   utilise maintenant BERT automatiquement si le dossier est présent, la
+   comparaison "Pipeline complet" vs "Sans couche X" reste valide sans
+   rien changer côté script d'ablation.
+3. Comparer le nouveau F1-Macro à 0,7260 (référence obtenue sans le
+   correcteur cassé) : le résultat attendu est supérieur, DistilBERT seul
+   atteignant déjà 0,988 sur le test set complet — mais c'est une mesure
+   à faire, pas une garantie.

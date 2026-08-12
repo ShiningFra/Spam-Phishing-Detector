@@ -1,0 +1,59 @@
+PATCH — incremental_layer_v2.py
+================================
+
+Un seul bloc à remplacer dans update_corrector_v2(). Avant :
+
+    # Spam oversampling : dupliquer les corrections spam x3
+    spam_corrections = [c for c in corrections if c.get("label") == "spam"]
+    oversampled = corrections + spam_corrections * 2  # x3 total
+    logger.info(f"Après spam oversampling : {len(oversampled)} exemples "
+                f"({len(spam_corrections)} spam × 3)")
+
+    texts = [c["text"] for c in oversampled]
+    labels = [c["label"] for c in oversampled]
+
+Après (remplace ce bloc) :
+
+    # Oversampling généralisé : toute classe minoritaire par rapport à la
+    # classe majoritaire du lot de corrections est sur-représentée, pas
+    # seulement le spam. C'est ce qui manquait et qui a permis au
+    # correcteur d'être entraîné sur 0 exemple de phishing malgré 24
+    # corrections réelles (19 ham + 5 spam, 0 phishing) : le code ne
+    # regardait que le déséquilibre spam, jamais le déséquilibre phishing.
+    from collections import Counter
+    counts = Counter(c.get("label") for c in corrections)
+    if counts:
+        majority_count = max(counts.values())
+        oversampled = list(corrections)
+        for cls, n in counts.items():
+            if n == 0 or n >= majority_count:
+                continue
+            ratio = max(1, round(majority_count / n))
+            extra = [c for c in corrections if c.get("label") == cls] * (ratio - 1)
+            oversampled += extra
+            if ratio > 1:
+                logger.info(f"Oversampling classe '{cls}' : {n} -> "
+                            f"{n * ratio} exemples effectifs (x{ratio})")
+    else:
+        oversampled = list(corrections)
+
+    logger.info(f"Après oversampling équilibré : {len(oversampled)} exemples "
+                f"(répartition d'origine : {dict(counts)})")
+
+    texts = [c["text"] for c in oversampled]
+    labels = [c["label"] for c in oversampled]
+
+---
+
+Pourquoi ce patch et pas une réécriture complète du fichier : le reste de
+incremental_layer_v2.py (préparation des features 523 dims, sauvegarde
+avec backup automatique, historique, migration de dimensions, CLI
+--show/--force/--reset/--eval) fonctionne correctement et n'a pas besoin
+d'être touché — seul le sur-échantillonnage était biaisé vers une seule
+classe.
+
+Pour appliquer : ouvre notebooks/api/incremental_layer_v2.py, cherche le
+commentaire "# Spam oversampling : dupliquer les corrections spam x3" à
+l'intérieur de update_corrector_v2(), et remplace le bloc jusqu'à
+"labels = [c["label"] for c in oversampled]" par la version "Après"
+ci-dessus.

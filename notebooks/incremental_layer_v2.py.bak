@@ -324,17 +324,12 @@ def update_corrector_v2(corrections, rf_model, tfidf, force=False):
     except Exception:
         sample_weight = None
 
-    logger.info("Mise à jour incrémentale (partial_fit, plusieurs passes)...")
-    N_EPOCHS = 15
-    rng = np.random.RandomState(42)
-    for _epoch in range(N_EPOCHS):
-            _idx = rng.permutation(X.shape[0])
-            corrector.partial_fit(
-                    X[_idx], y[_idx],
-                    classes=classes_present,
-                    sample_weight=sample_weight[_idx] if sample_weight is not None else None,
-            )
-    logger.info(f"Entraînement terminé ({N_EPOCHS} passes).")
+    logger.info("Mise à jour incrémentale (partial_fit)...")
+    corrector.partial_fit(
+        X, y,
+        classes=classes_present,
+        sample_weight=sample_weight,
+    )
 
     # Évaluation par classe
     y_pred = corrector.predict(X)

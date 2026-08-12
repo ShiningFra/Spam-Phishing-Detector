@@ -695,16 +695,6 @@ def _apply_corrector(corrector, rf_proba_dict: dict,
             w_corr = min(w_corr + 0.15, 0.55)
             logger.debug(f"Spam boost activé (w_corr={w_corr:.2f})")
 
-        # Garde de protection : si le RF est déjà très confiant sur phishing,
-        # le correcteur ne doit pas pouvoir écraser ce signal — tant qu'il n'a
-        # pas reçu un volume suffisant de vraies corrections phishing bien
-        # calibrées, son jugement sur cette classe reste structurellement
-        # moins fiable que celui du RF seul.
-        rf_phish_idx = class_names.index('phishing') if 'phishing' in class_names else None
-        if rf_phish_idx is not None and rf_proba[rf_phish_idx] > 0.70:
-            w_corr = min(w_corr, 0.15)
-            logger.debug(f"Protection RF phishing activée (w_corr plafonné à {w_corr:.2f})")
-
         w_rf  = 1.0 - w_corr
         final = w_rf * rf_proba + w_corr * corr_proba
         final = final / final.sum()
