@@ -217,7 +217,7 @@ def load_corrector():
     # Premier lancement
     c = SGDClassifier(
         loss="modified_huber",  # Probabilités via predict_proba
-        alpha=0.1,
+        alpha=0.001,
         max_iter=100,
         tol=1e-4,
         random_state=42,
@@ -347,7 +347,7 @@ def update_corrector_v2(corrections, rf_model, tfidf, force=False):
             shutil.copy2(CORRECTOR_PKL, backup)
             logger.info(f"Backup avant migration : {backup.name}")
         corrector = _SGD(
-            loss="modified_huber", alpha=0.1,
+            loss="modified_huber", alpha=0.001,
             max_iter=100, tol=1e-4, random_state=42,
         )
         logger.info(f"Nouveau correcteur SGD ({expected_features} features).")

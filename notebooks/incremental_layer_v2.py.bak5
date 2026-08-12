@@ -70,25 +70,6 @@ def load_base_models():
 # PRÉPARATION DES FEATURES (enrichies v2)
 # ══════════════════════════════════════════════════════════════════
 
-import joblib as _joblib_scaler
-_FEATURE_SCALER_CACHE = None
-_FEATURE_SCALER_PATH = Path(__file__).parent / "data" / "corrector_feature_scaler.pkl"
-
-def _load_feature_scaler():
-    """Charge (et met en cache) le normaliseur ajusté par fit_feature_scaler.py."""
-    global _FEATURE_SCALER_CACHE
-    if _FEATURE_SCALER_CACHE is not None:
-        return _FEATURE_SCALER_CACHE
-    if _FEATURE_SCALER_PATH.exists():
-        try:
-            _FEATURE_SCALER_CACHE = _joblib_scaler.load(_FEATURE_SCALER_PATH)
-            logger.info("Normaliseur de features chargé.")
-        except Exception as e:
-            logger.warning(f"Normaliseur non chargé : {e}")
-            _FEATURE_SCALER_CACHE = None
-    return _FEATURE_SCALER_CACHE
-
-
 def prepare_features_v2(texts, rf_model, tfidf):
     """
     Features pour le correcteur v2 :
@@ -128,15 +109,9 @@ def prepare_features_v2(texts, rf_model, tfidf):
         urls  = re.findall(r'https?://[^\s<>"]+', text)
         words = text.split()
         alpha = [c for c in text if c.isalpha()]
-        def safe_netloc(u):
-            try:
-                return urlparse(u).netloc
-            except ValueError:
-                return ''
-
         ip_url   = sum(1 for u in urls if re.search(r'https?://\d{1,3}\.\d{1,3}', u))
         susp_tld = sum(1 for u in urls
-                       if safe_netloc(u).rsplit('.',1)[-1] in BLACKLISTED_TLDS)
+                       if urlparse(u).netloc.rsplit('.',1)[-1] in BLACKLISTED_TLDS)
         brand    = sum(1 for u in urls for b in BRANDS if b in u.lower())
         return [
             len(urls),
@@ -145,7 +120,7 @@ def prepare_features_v2(texts, rf_model, tfidf):
             int(brand > 0),
             max((len(u) for u in urls), default=0),
             float(np.mean([len(u) for u in urls])) if urls else 0.0,
-            float(np.mean([safe_netloc(u).count('.')-1 for u in urls])) if urls else 0.0,
+            float(np.mean([urlparse(u).netloc.count('.')-1 for u in urls])) if urls else 0.0,
             int(any('@' in u for u in urls)),
             sum(c.isdigit() for u in urls for c in u) / max(sum(len(u) for u in urls), 1),
             sum(len(re.findall(r'[%@#!$&*]', u)) for u in urls),
@@ -187,17 +162,6 @@ def prepare_features_v2(texts, rf_model, tfidf):
 
     # Assemblage final : (3 + 500 + 20) = 523 features
     X = hstack([csr_matrix(rf_proba), X_tfidf_small, X_struct])
-
-    # Normalisation : indispensable pour SGDClassifier, dont la
-    # descente de gradient est dominée par les colonnes à grande
-    # échelle (char_count, word_count...) sans elle. Le normaliseur
-    # est ajusté une seule fois (fit_feature_scaler.py) et rechargé
-    # ici tel quel, pour rester cohérent entre les mises à jour
-    # successives du correcteur.
-    scaler = _load_feature_scaler()
-    if scaler is not None:
-        X = scaler.transform(X)
-
     return X, rf_proba
 
 
@@ -217,7 +181,7 @@ def load_corrector():
     # Premier lancement
     c = SGDClassifier(
         loss="modified_huber",  # Probabilités via predict_proba
-        alpha=0.1,
+        alpha=0.001,
         max_iter=100,
         tol=1e-4,
         random_state=42,
@@ -347,7 +311,7 @@ def update_corrector_v2(corrections, rf_model, tfidf, force=False):
             shutil.copy2(CORRECTOR_PKL, backup)
             logger.info(f"Backup avant migration : {backup.name}")
         corrector = _SGD(
-            loss="modified_huber", alpha=0.1,
+            loss="modified_huber", alpha=0.001,
             max_iter=100, tol=1e-4, random_state=42,
         )
         logger.info(f"Nouveau correcteur SGD ({expected_features} features).")
@@ -361,7 +325,7 @@ def update_corrector_v2(corrections, rf_model, tfidf, force=False):
         sample_weight = None
 
     logger.info("Mise à jour incrémentale (partial_fit, plusieurs passes)...")
-    N_EPOCHS = 3
+    N_EPOCHS = 15
     rng = np.random.RandomState(42)
     for _epoch in range(N_EPOCHS):
             _idx = rng.permutation(X.shape[0])

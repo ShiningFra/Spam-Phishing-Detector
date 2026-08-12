@@ -876,9 +876,9 @@ class HybridEmailPipelineV2:
         """Prédiction DistilBERT — retourne un dict {classe: probabilité}."""
         if self._bert_model is None:
             return {}
-        with torch.inference_mode():
+        with torch.no_grad():
             encoding = self._bert_tokenizer(
-                text[:2000], max_length=256, padding=True,
+                text[:2000], max_length=256, padding='max_length',
                 truncation=True, return_tensors='pt',
             )
             outputs = self._bert_model(**encoding)

@@ -1,0 +1,32 @@
+=== E:\Workspace\Memory\Spc\notebooks\incremental_layer_v2.py ===
+
+--- occurrence ligne 218 ---
+  213 | '        c = joblib.load(CORRECTOR_PKL)'
+  214 | '        logger.info(f"Correcteur chargé ({CORRECTOR_PKL.name})")'
+  215 | '        return c'
+  216 | ''
+  217 | '    # Premier lancement'
+  218 | '    c = SGDClassifier('
+  219 | '        loss="modified_huber",  # Probabilités via predict_proba'
+  220 | '        alpha=0.001,'
+  221 | '        max_iter=100,'
+  222 | '        tol=1e-4,'
+  223 | '        random_state=42,'
+  224 | '    )'
+  225 | '    logger.info("Nouveau correcteur SGD créé.")'
+
+--- occurrence ligne 349 ---
+  344 | '        ts     = datetime.now().strftime("%Y%m%d_%H%M%S")'
+  345 | '        backup = BACKUP_DIR / f"corrector_PRE_MIGRATION_{ts}.pkl"'
+  346 | '        if CORRECTOR_PKL.exists():'
+  347 | '            shutil.copy2(CORRECTOR_PKL, backup)'
+  348 | '            logger.info(f"Backup avant migration : {backup.name}")'
+  349 | '        corrector = _SGD('
+  350 | '            loss="modified_huber", alpha=0.001,'
+  351 | '            max_iter=100, tol=1e-4, random_state=42,'
+  352 | '        )'
+  353 | '        logger.info(f"Nouveau correcteur SGD ({expected_features} features).")'
+  354 | ''
+  355 | '    # Poids de classe (remplace class_weight="balanced" incompatible avec partial_fit)'
+  356 | '    classes_present = list(range(len(CLASS_NAMES)))'
+

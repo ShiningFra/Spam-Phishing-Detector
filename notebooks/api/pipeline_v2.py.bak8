@@ -21,14 +21,6 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List
 from urllib.parse import urlparse
-
-try:
-    import torch
-    from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
-    _BERT_AVAILABLE = True
-except ImportError:
-    _BERT_AVAILABLE = False
-
 from scipy.sparse import hstack, csr_matrix
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -487,7 +479,7 @@ class AdaptiveWeights:
     - La présence du correcteur SGD actif
     """
 
-    BASE = {'rules': 0.16, 'headers': 0.20, 'ml': 0.44, 'bert': 0.20}
+    BASE = {'rules': 0.20, 'headers': 0.25, 'ml': 0.55}
 
     def compute(self,
                 rule_spam: float,
@@ -814,8 +806,6 @@ class HybridEmailPipelineV2:
         self._label_encoder = None
         self._class_names   = ['ham', 'phishing', 'spam']
         self._corrector     = None
-        self._bert_tokenizer = None
-        self._bert_model     = None
 
         # Nouvelles couches v2
         self._whitelist     = WhitelistEngine()
@@ -832,22 +822,6 @@ class HybridEmailPipelineV2:
         self._label_encoder = joblib.load(DATA_DIR / 'label_encoder.pkl')
         self._class_names   = list(self._label_encoder.classes_)
         self._corrector     = _load_corrector()
-
-        bert_dir = DATA_DIR / 'distilbert_model'
-        if _BERT_AVAILABLE and bert_dir.exists():
-            try:
-                self._bert_tokenizer = DistilBertTokenizerFast.from_pretrained(str(bert_dir))
-                self._bert_model = DistilBertForSequenceClassification.from_pretrained(
-                    str(bert_dir), num_labels=len(self._class_names)
-                )
-                self._bert_model.eval()
-                logger.info("DistilBERT chargé.")
-            except Exception as e:
-                logger.warning(f"DistilBERT non chargé : {e}")
-                self._bert_tokenizer = None
-                self._bert_model = None
-        else:
-            logger.info("DistilBERT indisponible (torch/transformers absent ou dossier manquant) — pipeline exécuté sans cette couche.")
 
         logger.info(f"Modèle base  : {type(self._ml_model).__name__}")
         logger.info(f"Classes      : {self._class_names}")
@@ -872,26 +846,10 @@ class HybridEmailPipelineV2:
         proba_dict = {c: float(p) for c, p in zip(self._class_names, proba)}
         return proba_dict, X_tfidf, struct
 
-    def _predict_bert(self, text: str) -> dict:
-        """Prédiction DistilBERT — retourne un dict {classe: probabilité}."""
-        if self._bert_model is None:
-            return {}
-        with torch.inference_mode():
-            encoding = self._bert_tokenizer(
-                text[:2000], max_length=256, padding=True,
-                truncation=True, return_tensors='pt',
-            )
-            outputs = self._bert_model(**encoding)
-            probs = torch.softmax(outputs.logits, dim=-1).numpy()[0]
-        id2label = self._bert_model.config.id2label
-        bert_by_name = {id2label[i]: float(p) for i, p in enumerate(probs)}
-        return {c: bert_by_name.get(c, 0.0) for c in self._class_names}
-
     def _aggregate(self, rule_spam: float, rule_phish: float,
                    header_score: float, ml_proba: dict,
-                   weights: dict, bert_proba: dict = None) -> Tuple[str, float, str]:
-        """Agrégation pondérée avec poids adaptatifs (inclut DistilBERT si disponible)."""
-        bert_proba = bert_proba or {}
+                   weights: dict) -> Tuple[str, float, str]:
+        """Agrégation pondérée avec poids adaptatifs."""
         rule_ham = max(0.0, 1.0 - rule_spam - rule_phish)
         rule_vec = {'ham': rule_ham, 'spam': rule_spam, 'phishing': rule_phish}
         head_vec = {
@@ -903,8 +861,7 @@ class HybridEmailPipelineV2:
         for c in self._class_names:
             final[c] = (weights.get('rules', 0.20)   * rule_vec.get(c, 0) +
                         weights.get('headers', 0.25)  * head_vec.get(c, 0) +
-                        weights.get('ml', 0.35)       * ml_proba.get(c, 0) +
-                        weights.get('bert', 0.20)     * bert_proba.get(c, ml_proba.get(c, 0)))
+                        weights.get('ml', 0.55)       * ml_proba.get(c, 0))
 
         total = sum(final.values())
         if total > 0:
@@ -929,14 +886,10 @@ class HybridEmailPipelineV2:
         THRESH_PHISHING = 0.65
         THRESH_SPAM     = 0.40
 
-        ml_phish   = ml_proba.get('phishing', 0.0)
-        ml_ham     = ml_proba.get('ham', 0.0)
-        bert_phish = bert_proba.get('phishing', 0.0)
+        ml_phish = ml_proba.get('phishing', 0.0)
+        ml_ham   = ml_proba.get('ham', 0.0)
 
-        composite_phish = min(
-            ml_phish + 0.5 * rule_phish + 0.5 * head_vec.get('phishing', 0) + 0.5 * bert_phish,
-            1.0,
-        )
+        composite_phish = min(ml_phish + 0.5 * rule_phish + 0.5 * head_vec.get('phishing', 0), 1.0)
         composite_spam  = min(rule_spam + head_vec.get('spam', 0), 1.0)
 
         p_phish = composite_phish
@@ -1011,7 +964,7 @@ class HybridEmailPipelineV2:
         # un signal quasi-deterministe ; pas besoin d'atteindre 0.95 si le
         # rule_phish depasse deja un seuil modere apres ce boost)
         scam_domain_hit = any('scam_domain_keyword' in f for f in url_flags)
-        if False and scam_domain_hit and rule_phish >= 0.50:  # early-stop désactivé pour test
+        if scam_domain_hit and rule_phish >= 0.50:
             result.predicted_class   = 'phishing'
             result.global_confidence = max(rule_phish, 0.85)
             result.threat_level      = 'high'
@@ -1022,7 +975,7 @@ class HybridEmailPipelineV2:
             return result
 
         # Early stop
-        if False and rule_phish >= 0.95:  # early-stop désactivé pour test
+        if rule_phish >= 0.95:
             result.predicted_class   = 'phishing'
             result.global_confidence = rule_phish
             result.threat_level      = 'critical'
@@ -1032,7 +985,7 @@ class HybridEmailPipelineV2:
                 'phishing', rule_phish, rules_hit, [], url_flags)
             return result
 
-        if False and rule_spam >= 0.92:  # early-stop désactivé pour test (seuil vs v1 : 0.95)
+        if rule_spam >= 0.92:   # Seuil légèrement abaissé vs v1 (0.95)
             result.predicted_class   = 'spam'
             result.global_confidence = rule_spam
             result.threat_level      = 'high' if rule_spam >= 0.85 else 'medium'
@@ -1078,16 +1031,6 @@ class HybridEmailPipelineV2:
 
         result.ml_proba = ml_proba
 
-        # ── Couche 3b : DistilBERT (optionnelle) ────────────────
-        bert_proba = {}
-        if self._bert_model is not None:
-            try:
-                bert_proba = self._predict_bert(text)
-                path.append(f'bert({max(bert_proba, key=bert_proba.get)})')
-            except Exception as e:
-                logger.warning(f"BERT predict failed: {e}")
-                bert_proba = {}
-
         # ── Poids adaptatifs ────────────────────────────────────
         weights = self._adapt_weights.compute(
             rule_spam, rule_phish, header_score,
@@ -1099,7 +1042,7 @@ class HybridEmailPipelineV2:
 
         # ── Agrégation ──────────────────────────────────────────
         pred, conf, threat = self._aggregate(
-            rule_spam, rule_phish, header_score, ml_proba, weights, bert_proba
+            rule_spam, rule_phish, header_score, ml_proba, weights
         )
         result.predicted_class   = pred
         result.global_confidence = conf

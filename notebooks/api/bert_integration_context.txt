@@ -1,0 +1,298 @@
+=== E:\Workspace\Memory\Spc\notebooks\api\pipeline_v2.py ===
+
+--- def analyze (lignes 277 à 356) ---
+  277 | '    def analyze(self, text: str, is_whitelisted: bool = False'
+  278 | '                ) -> Tuple[float, float, List[str], List[str]]:'
+  279 | '        if not isinstance(text, str):'
+  280 | '            return 0.0, 0.0, [], []'
+  281 | ''
+  282 | '        tl = text.lower()'
+  283 | '        spam_pts, phish_pts = 0.0, 0.0'
+  284 | '        rules, url_flags    = [], []'
+  285 | ''
+  286 | '        # ── Spam : style ────────────────────────────────────────'
+  287 | "        excl = text.count('!')"
+  288 | '        if excl >= 3:'
+  289 | '            pts = min(excl * 0.04, 0.20)'
+  290 | '            spam_pts += pts'
+  291 | "            rules.append(f'exclamation_x{excl}(+{pts:.2f})')"
+  292 | ''
+  293 | '        alpha = [c for c in text if c.isalpha()]'
+  294 | '        up_r  = sum(1 for c in alpha if c.isupper()) / max(len(alpha), 1)'
+  295 | '        if up_r > 0.30:'
+  296 | '            spam_pts += 0.18'
+  297 | "            rules.append(f'uppercase_{up_r:.0%}(+0.18)')"
+  298 | ''
+  299 | "        if text.count('$') >= 2:"
+  300 | '            spam_pts += 0.12'
+  301 | "            rules.append('dollar_signs(+0.12)')"
+  302 | ''
+  303 | '        # ── Spam : lexique catégorisé ────────────────────────────'
+  304 | '        for category, patterns in SPAM_LEXICON.items():'
+  305 | '            hits   = [p for p in patterns if p in tl]'
+  306 | '            weight = self.SPAM_CATEGORY_WEIGHTS[category]'
+  307 | '            if hits:'
+  308 | '                # Score cumulatif plafonné par catégorie'
+  309 | '                cat_score = min(len(hits) * weight, weight * 2)'
+  310 | '                # Atténuation si whitelist (newsletters légitimes)'
+  311 | "                if is_whitelisted and category == 'marketing':"
+  312 | '                    cat_score *= 0.2'
+  313 | '                spam_pts += cat_score'
+  314 | "                rules.append(f'spam_{category}_x{len(hits)}(+{cat_score:.2f})')"
+  315 | ''
+  316 | '        # ── Phishing : URLs ──────────────────────────────────────'
+  317 | '        # Capture les URLs avec OU sans schema (www.exemple.com seul, courant'
+  318 | "        # dans les emails d'arnaque qui omettent http:// pour paraitre informels)"
+  319 | "        urls = re.findall(r'(?:https?://)?(?:www\\.)?[a-zA-Z0-9-]+\\.[a-zA-Z]{2,}(?:/\\S*)?', text)"
+  320 | '        # Filtrer les faux positifs (emails, ex: user.name@domain.com deja gere ailleurs)'
+  321 | "        urls = [u for u in urls if '@' not in u or u.count('@') == 0]"
+  322 | ''
+  323 | '        SCAM_DOMAIN_PATTERNS = ['
+  324 | "            'scam', 'arnaque', 'phishing', 'fake', 'verify-account',"
+  325 | "            'secure-update', 'account-confirm', 'login-verify',"
+  326 | '        ]'
+  327 | ''
+  328 | '        for url in urls:'
+  329 | '            try:'
+  330 | '                # Reconstruire un netloc meme sans schema'
+  331 | "                if not url.startswith(('http://', 'https://')):"
+  332 | "                    candidate = 'http://' + url"
+  333 | '                else:'
+  334 | '                    candidate = url'
+  335 | '                parsed = urlparse(candidate)'
+  336 | "                h = parsed.netloc.lower().lstrip('www.')"
+  337 | ''
+  338 | "                if not h or '.' not in h:"
+  339 | '                    continue'
+  340 | ''
+  341 | '                # IP brute'
+  342 | "                if re.match(r'^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}', h):"
+  343 | '                    phish_pts += 0.40'
+  344 | "                    url_flags.append(f'ip_url:{url[:50]}')"
+  345 | ''
+  346 | '                # TLD suspect'
+  347 | "                tld = h.rsplit('.', 1)[-1] if '.' in h else ''"
+  348 | '                if tld in BLACKLISTED_TLDS:'
+  349 | '                    phish_pts += 0.25'
+  350 | "                    url_flags.append(f'suspicious_tld:.{tld}')"
+  351 | ''
+  352 | "                # Domaine contenant explicitement un mot d'arnaque"
+  353 | '                # (ex: scamarnaques.com, fake-paypal.xyz) -> tres fort signal'
+  354 | '                for pat in SCAM_DOMAIN_PATTERNS:'
+  355 | '                    if pat in h:'
+  356 | '                        phish_pts += 0.55'
+
+--- def analyze (lignes 926 à 1005) ---
+  926 | "    def analyze(self, text: str, raw_email: str = '') -> AnalysisResult:"
+  927 | '        from time import time'
+  928 | '        t0     = time()'
+  929 | '        result = AnalysisResult()'
+  930 | '        path   = []'
+  931 | ''
+  932 | '        # ── Couche 0 : Whitelist ────────────────────────────────'
+  933 | "        sender_domain = ''"
+  934 | '        if raw_email:'
+  935 | '            try:'
+  936 | '                msg = email_lib.message_from_string(raw_email)'
+  937 | "                m = re.search(r'@([\\w.-]+)', msg.get('From', ''))"
+  938 | '                if m: sender_domain = m.group(1).lower()'
+  939 | '            except Exception:'
+  940 | '                pass'
+  941 | ''
+  942 | '        whitelisted, wl_reason = self._whitelist.is_whitelisted(text, sender_domain)'
+  943 | '        if whitelisted:'
+  944 | '            result.whitelisted       = True'
+  945 | "            result.predicted_class   = 'ham'"
+  946 | "            result.threat_level      = 'none'"
+  947 | '            result.global_confidence = 0.95'
+  948 | '            result.latency_ms        = (time() - t0) * 1000'
+  949 | "            result.decision_path     = f'whitelist({wl_reason}) -> HAM'"
+  950 | '            result.explanation       = f"Domaine expéditeur reconnu comme légitime ({wl_reason})."'
+  951 | '            return result'
+  952 | ''
+  953 | '        # ── Couche 1 : Règles heuristiques + SpamBooster ───────'
+  954 | '        rule_spam, rule_phish, rules_hit, url_flags = self._heuristic.analyze('
+  955 | '            text, is_whitelisted=False'
+  956 | '        )'
+  957 | '        result.rule_score      = max(rule_spam, rule_phish)'
+  958 | '        result.rules_triggered = rules_hit'
+  959 | '        result.url_flags       = url_flags'
+  960 | "        path.append(f'rules(s={rule_spam:.2f},p={rule_phish:.2f})')"
+  961 | ''
+  962 | '        # Early stop combine : domaine scam explicite + signal coherent'
+  963 | '        # (un domaine contenant litteralement "scam"/"arnaque"/"phishing" est'
+  964 | "        # un signal quasi-deterministe ; pas besoin d'atteindre 0.95 si le"
+  965 | '        # rule_phish depasse deja un seuil modere apres ce boost)'
+  966 | "        scam_domain_hit = any('scam_domain_keyword' in f for f in url_flags)"
+  967 | '        if scam_domain_hit and rule_phish >= 0.50:'
+  968 | "            result.predicted_class   = 'phishing'"
+  969 | '            result.global_confidence = max(rule_phish, 0.85)'
+  970 | "            result.threat_level      = 'high'"
+  971 | '            result.latency_ms        = (time() - t0) * 1000'
+  972 | "            result.decision_path     = ' -> '.join(path) + ' -> EARLY_STOP_SCAM_DOMAIN'"
+  973 | '            result.explanation       = self._explainer.explain('
+  974 | "                'phishing', max(rule_phish, 0.85), rules_hit, [], url_flags)"
+  975 | '            return result'
+  976 | ''
+  977 | '        # Early stop'
+  978 | '        if rule_phish >= 0.95:'
+  979 | "            result.predicted_class   = 'phishing'"
+  980 | '            result.global_confidence = rule_phish'
+  981 | "            result.threat_level      = 'critical'"
+  982 | '            result.latency_ms        = (time() - t0) * 1000'
+  983 | "            result.decision_path     = ' -> '.join(path) + ' -> EARLY_STOP_PHISHING'"
+  984 | '            result.explanation       = self._explainer.explain('
+  985 | "                'phishing', rule_phish, rules_hit, [], url_flags)"
+  986 | '            return result'
+  987 | ''
+  988 | '        if rule_spam >= 0.92:   # Seuil légèrement abaissé vs v1 (0.95)'
+  989 | "            result.predicted_class   = 'spam'"
+  990 | '            result.global_confidence = rule_spam'
+  991 | "            result.threat_level      = 'high' if rule_spam >= 0.85 else 'medium'"
+  992 | '            result.latency_ms        = (time() - t0) * 1000'
+  993 | "            result.decision_path     = ' -> '.join(path) + ' -> EARLY_STOP_SPAM'"
+  994 | '            result.explanation       = self._explainer.explain('
+  995 | "                'spam', rule_spam, rules_hit, [], url_flags)"
+  996 | '            # Catégorie spam dominante'
+  997 | "            for cat in ['financial', 'scam', 'pharma', 'marketing']:"
+  998 | "                if any(f'spam_{cat}' in r for r in rules_hit):"
+  999 | '                    result.spam_category = cat'
+ 1000 | '                    break'
+ 1001 | '            return result'
+ 1002 | ''
+ 1003 | '        # ── Couche 2 : Headers ──────────────────────────────────'
+ 1004 | '        if raw_email:'
+ 1005 | '            header_score, header_flags, _ = analyze_headers(raw_email)'
+
+--- def analyze (lignes 1091 à 1095) ---
+ 1091 | '    def analyze(self, text: str, raw_email: Optional[str] = None) -> dict:'
+ 1092 | '        if not self._loaded:'
+ 1093 | '            raise RuntimeError("Pipeline non chargé.")'
+ 1094 | "        return self._pipeline.analyze(text, raw_email or '').to_dict()"
+ 1095 | ''
+
+--- def _aggregate (lignes 849 à 925) ---
+  849 | '    def _aggregate(self, rule_spam: float, rule_phish: float,'
+  850 | '                   header_score: float, ml_proba: dict,'
+  851 | '                   weights: dict) -> Tuple[str, float, str]:'
+  852 | '        """Agrégation pondérée avec poids adaptatifs."""'
+  853 | '        rule_ham = max(0.0, 1.0 - rule_spam - rule_phish)'
+  854 | "        rule_vec = {'ham': rule_ham, 'spam': rule_spam, 'phishing': rule_phish}"
+  855 | '        head_vec = {'
+  856 | "            'ham':      max(0.0, 1.0 - header_score),"
+  857 | "            'spam':     header_score * 0.35,   # Légèrement augmenté vs v1 (0.4)"
+  858 | "            'phishing': header_score * 0.65,"
+  859 | '        }'
+  860 | '        final = {}'
+  861 | '        for c in self._class_names:'
+  862 | "            final[c] = (weights.get('rules', 0.20)   * rule_vec.get(c, 0) +"
+  863 | "                        weights.get('headers', 0.25)  * head_vec.get(c, 0) +"
+  864 | "                        weights.get('ml', 0.55)       * ml_proba.get(c, 0))"
+  865 | ''
+  866 | '        total = sum(final.values())'
+  867 | '        if total > 0:'
+  868 | '            final = {c: v / total for c, v in final.items()}'
+  869 | ''
+  870 | '        # ── Seuils calibrés — appliqués sur ml_proba BRUT (RF+SGD) ──────'
+  871 | '        # Les seuils tau_phish=0.90 / tau_spam=0.60 ont ete calibres sur'
+  872 | '        # les sorties brutes de Random Forest (cf. evaluation X_test).'
+  873 | '        # Les appliquer sur `final` (apres fusion ponderee avec regles/'
+  874 | '        # headers, qui ecrase les probas vers ~0.55) les rend'
+  875 | '        # structurellement inatteignables. On les applique donc sur'
+  876 | '        # ml_proba directement, puis on combine avec un score composite'
+  877 | '        # qui integre les signaux regles/headers comme score additionnel'
+  878 | '        # plutot que comme moyenne ponderee.'
+  879 | '        # Recalibre empiriquement : ml_proba.phishing observe en pratique'
+  880 | '        # dans la plage ~0.53-0.57 quasi quel que soit le contenu (le'
+  881 | '        # correcteur SGD ecrase la dynamique de RF vers un plateau).'
+  882 | '        # THRESH_PHISHING=0.65 est atteignable uniquement quand un signal'
+  883 | "        # heuristique fort (rule_phish) s'ajoute au plateau ml (~0.55)."
+  884 | '        # comp_spam = rule_spam directement, car ml_proba.spam est'
+  885 | '        # negligeable (~0.0002) dans tous les cas observes.'
+  886 | '        THRESH_PHISHING = 0.65'
+  887 | '        THRESH_SPAM     = 0.40'
+  888 | ''
+  889 | "        ml_phish = ml_proba.get('phishing', 0.0)"
+  890 | "        ml_ham   = ml_proba.get('ham', 0.0)"
+  891 | ''
+  892 | "        composite_phish = min(ml_phish + 0.5 * rule_phish + 0.5 * head_vec.get('phishing', 0), 1.0)"
+  893 | "        composite_spam  = min(rule_spam + head_vec.get('spam', 0), 1.0)"
+  894 | ''
+  895 | '        p_phish = composite_phish'
+  896 | '        p_spam  = composite_spam'
+  897 | "        p_ham   = final.get('ham', ml_ham)"
+  898 | ''
+  899 | '        if p_phish >= THRESH_PHISHING:'
+  900 | "            pred, conf = 'phishing', p_phish"
+  901 | '        elif p_spam >= THRESH_SPAM:'
+  902 | "            pred, conf = 'spam', p_spam"
+  903 | '        else:'
+  904 | '            # Fallback : decision par argmax sur le score `final` fusionne'
+  905 | "            # (capture les cas ou aucun seuil n'est atteint mais ou le"
+  906 | '            # signal fusionne penche clairement vers une classe non-ham)'
+  907 | '            pred = max(final, key=final.get)'
+  908 | '            conf = final[pred]'
+  909 | "            if pred == 'ham':"
+  910 | '                conf = p_ham'
+  911 | ''
+  912 | '        # Niveau de menace'
+  913 | "        if pred == 'ham':"
+  914 | "            threat = 'none'"
+  915 | "        elif pred == 'phishing':"
+  916 | "            if conf >= 0.95:   threat = 'critical'"
+  917 | "            elif conf >= 0.90: threat = 'high'"
+  918 | "            else:              threat = 'medium'"
+  919 | '        else:  # spam'
+  920 | "            if conf >= 0.80:   threat = 'high'"
+  921 | "            elif conf >= 0.60: threat = 'medium'"
+  922 | "            else:              threat = 'low'"
+  923 | ''
+  924 | '        return pred, conf, threat'
+  925 | ''
+
+--- contexte poids adaptatifs (autour de la ligne 9) ---
+    7 | 'Améliorations par rapport à v1 :'
+    8 | '  1. SpamBooster     — couche dédiée à la détection spam (règles + lexique étendu)'
+    9 | "  2. AdaptiveWeights — poids d'agrégation ajustés selon la confiance par classe"
+   10 | '  3. SpamLexicon      — 80+ patterns spam (finance, pharma, marketing, arnaques)'
+   11 | '  4. Correcteur SGD  — features enrichies (20 structurelles + contexte temporel)'
+   12 | '  5. AutoTrigger     — déclenchement automatique du correcteur sans seuil fixe'
+   13 | '  6. ExplainEngine   — explication en langage naturel de chaque décision'
+   14 | '"""'
+   15 | ''
+   16 | 'import re'
+   17 | 'import html'
+   18 | 'import logging'
+   19 | 'import joblib'
+   20 | 'import numpy as np'
+   21 | 'from pathlib import Path'
+   22 | 'from typing import Optional, Tuple, Dict, List'
+   23 | 'from urllib.parse import urlparse'
+
+--- __init__ de [class WhitelistEngine:] (lignes 217 à 220) ---
+  217 | '    def __init__(self):'
+  218 | '        self.domains = set(DEFAULT_WHITELIST)'
+  219 | '        self._load_custom()'
+  220 | ''
+
+--- __init__ de [class HybridEmailPipelineV2:] (lignes 803 à 815) ---
+  803 | '    def __init__(self):'
+  804 | '        self._ml_model      = None'
+  805 | '        self._tfidf         = None'
+  806 | '        self._label_encoder = None'
+  807 | "        self._class_names   = ['ham', 'phishing', 'spam']"
+  808 | '        self._corrector     = None'
+  809 | ''
+  810 | '        # Nouvelles couches v2'
+  811 | '        self._whitelist     = WhitelistEngine()'
+  812 | '        self._heuristic     = HeuristicLayer()'
+  813 | '        self._adapt_weights = AdaptiveWeights()'
+  814 | '        self._explainer     = ExplainEngine()'
+  815 | ''
+
+--- __init__ de [class PipelineLoader:] (lignes 1071 à 1074) ---
+ 1071 | '    def __init__(self):'
+ 1072 | '        self._pipeline = HybridEmailPipelineV2()'
+ 1073 | '        self._loaded   = False'
+ 1074 | ''
+

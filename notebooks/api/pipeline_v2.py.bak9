@@ -876,9 +876,9 @@ class HybridEmailPipelineV2:
         """Prédiction DistilBERT — retourne un dict {classe: probabilité}."""
         if self._bert_model is None:
             return {}
-        with torch.inference_mode():
+        with torch.no_grad():
             encoding = self._bert_tokenizer(
-                text[:2000], max_length=256, padding=True,
+                text[:2000], max_length=256, padding='max_length',
                 truncation=True, return_tensors='pt',
             )
             outputs = self._bert_model(**encoding)
@@ -1011,7 +1011,7 @@ class HybridEmailPipelineV2:
         # un signal quasi-deterministe ; pas besoin d'atteindre 0.95 si le
         # rule_phish depasse deja un seuil modere apres ce boost)
         scam_domain_hit = any('scam_domain_keyword' in f for f in url_flags)
-        if False and scam_domain_hit and rule_phish >= 0.50:  # early-stop désactivé pour test
+        if scam_domain_hit and rule_phish >= 0.50:
             result.predicted_class   = 'phishing'
             result.global_confidence = max(rule_phish, 0.85)
             result.threat_level      = 'high'
@@ -1022,7 +1022,7 @@ class HybridEmailPipelineV2:
             return result
 
         # Early stop
-        if False and rule_phish >= 0.95:  # early-stop désactivé pour test
+        if rule_phish >= 0.95:
             result.predicted_class   = 'phishing'
             result.global_confidence = rule_phish
             result.threat_level      = 'critical'
@@ -1032,7 +1032,7 @@ class HybridEmailPipelineV2:
                 'phishing', rule_phish, rules_hit, [], url_flags)
             return result
 
-        if False and rule_spam >= 0.92:  # early-stop désactivé pour test (seuil vs v1 : 0.95)
+        if rule_spam >= 0.92:   # Seuil légèrement abaissé vs v1 (0.95)
             result.predicted_class   = 'spam'
             result.global_confidence = rule_spam
             result.threat_level      = 'high' if rule_spam >= 0.85 else 'medium'
