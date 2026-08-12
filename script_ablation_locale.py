@@ -49,6 +49,23 @@ pipeline_v2 = HybridEmailPipelineV2()
 pipeline_v2.load_models()
 print("Pipeline prêt.\n")
 
+# ── Cache des prédictions BERT ─────────────────────────────────────
+# Les 4 configurations d'ablation utilisent le même échantillon de
+# textes (même graine aléatoire) — BERT n'a besoin de tourner qu'une
+# seule fois par texte, pas une fois par configuration.
+import pipeline_v2 as _pv2_module
+_bert_cache = {}
+_original_predict_bert = _pv2_module.HybridEmailPipelineV2._predict_bert
+
+def _cached_predict_bert(self, text):
+    if text not in _bert_cache:
+        _bert_cache[text] = _original_predict_bert(self, text)
+    return _bert_cache[text]
+
+if getattr(_pv2_module, "_BERT_AVAILABLE", False):
+    _pv2_module.HybridEmailPipelineV2._predict_bert = _cached_predict_bert
+    print("Cache BERT activé (les 4 configurations partageront les mêmes prédictions).\n")
+
 # ---------------------------------------------------------------------------
 # 2. Reconstruire EXACTEMENT le même test set que NB02
 #    (même random_state=42, même test_size=0.15, même stratify)
